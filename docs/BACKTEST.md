@@ -101,3 +101,51 @@ Do not promote 1m to the main strategy from this section. Default remains:
 ```bash
 python -m alicia backtest
 ```
+
+## 2h + RR 1:2 experiment (curiosity / tuning)
+
+**Not the product default.** Default CLI remains 1h entry / 4h EMA200 / stop **1.5×ATR** / TP **2×ATR** (~1:1.33). This run changes both the bar size and the target multiple.
+
+```bash
+python -m alicia download --timeframe 2h --years 2
+python -m alicia backtest --timeframe 2h --reward-risk 2
+```
+
+| Item | Value |
+| --- | --- |
+| Run at | 2026-09-12 17:20 UTC |
+| Venue | OKX public spot `BTC/USDT` **native 2h** (Binance 451; OKX honors `since`) |
+| Entry TF | **2h** — same RSI(14) cross-up through 40 + volume > SMA20, ATR(14) on 2h bars |
+| Trend TF | **8h EMA200** on completed 8h buckets only (UTC 00:00 / 08:00 / 16:00). 2h→8h is the same **4×** step as product 1h→4h. Chosen over 1D EMA200 (cleaner ratio; warmup ≈ 200×8h ≈ 67 days vs 200 days). |
+| Stop / TP | Stop **1.5 × ATR(14, 2h)** below fill. TP **3.0 × ATR(14, 2h)** above fill. Reward distance = **2 ×** risk distance (**RR 1:2**). Product TP=2×ATR is only ~1:1.33. |
+| Window | **~2 years**: 8,759 bars · 2024-09-12 18:00 UTC → 2026-09-12 14:00 UTC |
+| Cache | `data/cache/okx_BTCUSDT_2h.csv` (does **not** replace the 1h active pointer). If a venue lacks native 2h, `backtest --timeframe 2h` resamples from the 1h cache. |
+| Order book | **Skipped** — no historical L2 |
+| Fees / slippage / sizing | Same as the 1h product run (10 bps / 5 bps / 2% risk / €2,000 / −10% monthly kill-switch) |
+
+### 2h + RR 1:2 results (fees + slippage included)
+
+| Metric | 2h + RR 1:2 | Product 1h/4h (2y) | 1m experiment (60d) |
+| --- | --- | --- | --- |
+| Trades | **47** (0 open) | 92 | 109 |
+| Wins / losses | **15 / 32** | 38 / 54 | 0 / 109 |
+| Win rate | **31.91%** | 41.30% | 0.00% |
+| Equity | 2,000.00 → **1,734.11** | 2,000.00 → 1,498.36 | 2,000.00 → 1,450.86 |
+| Return | **−13.29%** | −25.08% | −27.46% |
+| Max drawdown | **−15.34%** | −28.92% | −27.46% |
+| Closed PnL | −265.89 USDT | −501.64 USDT | −549.14 USDT |
+| Fees / slippage | 167.85 / 83.93 USDT | 316.00 / 158.00 | 373.42 / 186.71 |
+| Cost impact | 211.40 USDT (zero-cost equity 1,945.51) | 419.57 USDT | 603.25 USDT |
+
+Last fills (newest): 2026-08-31 04:00 stop −24.08 · 2026-09-02 14:00 TP +41.71 · 2026-09-08 10:00 stop −20.02 · 2026-09-08 16:00 stop −22.79 · 2026-09-11 14:00 stop −28.08.
+
+Better than the product 1h/4h **−25%** and the 1m **−27%** on this window (shallower DD, fewer trades, still **negative** after costs; zero-cost end equity 1,945.51 is still slightly underwater). Win rate dropped vs 1h because the target is farther.
+
+Control on the **same 2h/8h series** with product TP=2×ATR (RR ~1:1.33, no `--reward-risk`): 47 trades, 20/27, 42.55% WR, return **−13.41%**, max DD −16.57%. Almost the same P&L as RR 1:2 — most of the lift vs 1h is the **2h/8h timeframe**, not the wider target. Monthly −10% kill-switch did **not** trip on the RR 1:2 run (it did on the 2h product-RR control).
+
+Still not strong enough to promote. Default remains:
+
+```bash
+python -m alicia backtest
+```
+
