@@ -13,7 +13,14 @@ from alicia.config import Settings, load_settings
 from alicia.indicators import attach_indicators
 from alicia.risk import MonthlyDrawdownGuard, size_from_settings
 from alicia.session import SessionWindow, session_allows_signal
-from alicia.strategy import ExtraFilters, EntryDecision, evaluate_entry, stop_price, take_profit_price
+from alicia.strategy import (
+    DONCHIAN_N,
+    ExtraFilters,
+    EntryDecision,
+    decide_entry,
+    stop_from_mode,
+    take_profit_price,
+)
 
 
 @dataclass
@@ -52,6 +59,10 @@ class BacktestResult:
     profile: str = "default"
     extra_filters: ExtraFilters = field(default_factory=ExtraFilters)
     breakeven_r: float | None = None
+    signal: str = "rsi"
+    donchian_n: int = DONCHIAN_N
+    trail_atr: float | None = None
+    stop_mode: str = "atr"
 
     @property
     def closed_trades(self) -> list[Trade]:
@@ -78,9 +89,15 @@ class BacktestResult:
             "trend_timeframe": self.trend_timeframe,
             "stop_atr_mult": self.stop_atr_mult,
             "tp_atr_mult": self.tp_atr_mult,
-            "reward_risk": round(self.tp_atr_mult / self.stop_atr_mult, 4)
-            if self.stop_atr_mult
-            else None,
+            "signal": self.signal,
+            "donchian_n": self.donchian_n,
+            "trail_atr": self.trail_atr,
+            "stop_mode": self.stop_mode,
+            "reward_risk": None
+            if self.trail_atr
+            else (
+                round(self.tp_atr_mult / self.stop_atr_mult, 4) if self.stop_atr_mult else None
+            ),
             "bars": int(len(self.equity_curve)) if self.equity_curve is not None else 0,
             "first_bar": first,
             "last_bar": last,
@@ -152,10 +169,22 @@ def run_backtest(
     entry_until: pd.Timestamp | None = None,
     extra: ExtraFilters | None = None,
     breakeven_r: float | None = None,
+    signal: str = "rsi",
+    donchian_n: int = DONCHIAN_N,
+    trail_atr: float | None = None,
+    stop_mode: str = "atr",
 ) -> BacktestResult:
     settings = settings or load_settings()
     calendar = calendar if calendar is not None else calendar_from_settings(settings)
-    frame = attach_indicators(ohlcv_1h, trend_timeframe=trend_timeframe)
+    signal = (signal or "rsi").strip().lower()
+    stop_mode = (stop_mode or "atr").strip().lower()
+    if donchian_n < 1:
+        raise ValueError("donchian_n must be >= 1")
+    if trail_atr is not None and trail_atr <= 0:
+        raise ValueError("trail_atr must be positive")
+    frame = attach_indicators(
+        ohlcv_1h, trend_timeframe=trend_timeframe, donchian_n=donchian_n
+    )
     if entry_from is not None:
         entry_from = pd.Timestamp(entry_from)
         entry_from = entry_from.tz_localize("UTC") if entry_from.tzinfo is None else entry_from.tz_convert("UTC")
@@ -179,6 +208,10 @@ def run_backtest(
         profile=profile,
         extra_filters=extra or ExtraFilters(),
         breakeven_r=breakeven_r,
+        signal=signal,
+        donchian_n=donchian_n,
+        trail_atr=trail_atr,
+        stop_mode=stop_mode,
     )
     equity_points: list[tuple[pd.Timestamp, float]] = []
 
@@ -200,7 +233,8 @@ def run_backtest(
             raw_entry = float(row["open"])
             fill = apply_buy_slippage(raw_entry, slip)
             stop = float(pending_entry["stop_fn"](fill))
-            take = float(pending_entry["tp_fn"](fill))
+            take = pending_entry["tp_fn"](fill)
+            take = float("inf") if take is None else float(take)
             trade_qty = size_from_settings(
                 settings,
                 entry_price=fill,
@@ -246,8 +280,9 @@ def run_backtest(
             if low <= position.stop:
                 raw_exit = position.stop
                 exit_px = apply_sell_slippage(raw_exit, slip)
-                reason_exit = "stop"
-            elif high >= position.take_profit:
+                trailed = trail_atr is not None and position.stop > position.initial_stop + 1e-12
+                reason_exit = "trail" if trailed else "stop"
+            elif position.take_profit < float("inf") and high >= position.take_profit:
                 raw_exit = position.take_profit
                 exit_px = apply_sell_slippage(raw_exit, slip)
                 reason_exit = "take-profit"
@@ -267,6 +302,11 @@ def run_backtest(
                 )
                 qty = 0.0
                 position = None
+            elif trail_atr is not None and not pd.isna(row["atr_14"]) and float(row["atr_14"]) > 0:
+                # Ratchet after this bar's exit check (uses completed close; no intra-bar trail).
+                new_stop = mark - float(trail_atr) * float(row["atr_14"])
+                if new_stop > position.stop:
+                    position.stop = new_stop
 
         has_open = position is not None and position.exit_time is None
         event_reason = calendar.pause_reason(_as_utc_ts(ts).date())
@@ -290,7 +330,11 @@ def run_backtest(
         ema50_v = row["ema50"] if "ema50" in frame.columns else None
         atr_pct = row["atr_pct"] if "atr_pct" in frame.columns else None
         atr_q = row["atr_pct_q25"] if "atr_pct_q25" in frame.columns else None
-        decision = evaluate_entry(
+        close_prev = row["close_prev"] if "close_prev" in frame.columns else None
+        donch = row["donchian_high"] if "donchian_high" in frame.columns else None
+        ema20_v = row["ema20"] if "ema20" in frame.columns else None
+        decision = decide_entry(
+            signal,
             price=mark,
             ema200_4h=None if pd.isna(ema) else float(ema),
             rsi_value=None if pd.isna(rsi_v) else float(rsi_v),
@@ -306,6 +350,10 @@ def run_backtest(
             ema50=None if ema50_v is None or pd.isna(ema50_v) else float(ema50_v),
             atr_pct=None if atr_pct is None or pd.isna(atr_pct) else float(atr_pct),
             atr_pct_q25=None if atr_q is None or pd.isna(atr_q) else float(atr_q),
+            prev_close=None if close_prev is None or pd.isna(close_prev) else float(close_prev),
+            donchian_high=None if donch is None or pd.isna(donch) else float(donch),
+            donchian_n=donchian_n,
+            ema20=None if ema20_v is None or pd.isna(ema20_v) else float(ema20_v),
         )
         if i % max(len(frame) // 8, 1) == 0 or decision.enter:
             result.decisions_sampled.append((ts, decision))
@@ -319,14 +367,25 @@ def run_backtest(
             and float(atr_v) > 0
         ):
             atr_signal = float(atr_v)
+            signal_low = float(row["low"])
             pending_entry = {
                 "signal_time": ts,
                 "reason": decision.reason,
-                "stop_fn": lambda fill, a=atr_signal: stop_price(
-                    fill, a, atr_mult=stop_atr_mult
+                "stop_fn": lambda fill, a=atr_signal, lo=signal_low: stop_from_mode(
+                    fill,
+                    a,
+                    atr_mult=stop_atr_mult,
+                    signal_low=lo,
+                    mode=stop_mode,
                 ),
-                "tp_fn": lambda fill, a=atr_signal: take_profit_price(
-                    fill, a, atr_mult=tp_atr_mult
+                "tp_fn": (
+                    (lambda fill: None)
+                    if trail_atr is not None
+                    else (
+                        lambda fill, a=atr_signal: take_profit_price(
+                            fill, a, atr_mult=tp_atr_mult
+                        )
+                    )
                 ),
             }
 
@@ -354,6 +413,10 @@ def run_backtest(
             entry_until=entry_until,
             extra=extra,
             breakeven_r=breakeven_r,
+            signal=signal,
+            donchian_n=donchian_n,
+            trail_atr=trail_atr,
+            stop_mode=stop_mode,
         )
         result.zero_cost_end_equity = baseline.end_equity
     return result
@@ -365,8 +428,17 @@ def format_report(result: BacktestResult) -> str:
         "Alicia backtest — BTC/USDT spot, LONG only",
         f"  source:        {s['source']}",
         f"  timeframes:    entry {s['entry_timeframe']} / trend EMA200 {s['trend_timeframe']}",
-        f"  stop / TP:     {s['stop_atr_mult']:g}×ATR / {s['tp_atr_mult']:g}×ATR "
-        f"(RR 1:{s['reward_risk']:g})",
+        (
+            f"  stop / trail:  {s['stop_atr_mult']:g}×ATR initial / trail {s['trail_atr']:g}×ATR "
+            f"(no fixed TP, stop-mode {s['stop_mode']})"
+            if s["trail_atr"]
+            else (
+                f"  stop / TP:     {s['stop_atr_mult']:g}×ATR / {s['tp_atr_mult']:g}×ATR "
+                f"(RR 1:{s['reward_risk']:g}, stop-mode {s['stop_mode']})"
+            )
+        ),
+        f"  signal:        {s['signal']}"
+        + (f"  Donchian N={s['donchian_n']}" if s["signal"] == "breakout" else ""),
         f"  profile:       {s['profile']}"
         + (f"  session {s['session']}" if s["session"] else "  session 24/7 (product)"),
         f"  bars:          {s['bars']}  ({s['first_bar']} → {s['last_bar']})",

@@ -58,6 +58,13 @@ def sma(values: pd.Series, period: int) -> pd.Series:
     return values.astype("float64").rolling(window=period, min_periods=period).mean()
 
 
+def donchian_prior_high(high: pd.Series, period: int = 20) -> pd.Series:
+    """Prior N-bar high: rolling max of high, shifted 1 so the current bar is excluded."""
+    if period < 1:
+        raise ValueError("Donchian period must be >= 1")
+    return high.astype("float64").rolling(window=period, min_periods=period).max().shift(1)
+
+
 PANDAS_RULES = {
     "1m": "1min",
     "5m": "5min",
@@ -108,11 +115,17 @@ def resample_ohlcv_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return resample_ohlcv(df_1h, "4h")
 
 
-def attach_indicators(df: pd.DataFrame, *, trend_timeframe: str = "4h") -> pd.DataFrame:
+def attach_indicators(
+    df: pd.DataFrame,
+    *,
+    trend_timeframe: str = "4h",
+    donchian_n: int = 20,
+) -> pd.DataFrame:
     """Add RSI/ATR/volume MA on the bar TF and completed-trend EMA200 (no lookahead).
 
     Product default is 1h bars + 4h EMA200. Experiments: 1m+1h, 2h+8h, 4h+12h EMA200.
     The column name ``ema200_4h`` is kept as the trend-EMA series for callers.
+    Also attaches EMA20 and a no-lookahead Donchian prior-N high (breakout family).
     """
     if df.empty:
         raise ValueError("OHLCV frame is empty")
@@ -136,7 +149,10 @@ def attach_indicators(df: pd.DataFrame, *, trend_timeframe: str = "4h") -> pd.Da
     frame["atr_pct"] = frame["atr_14"] / frame["close"].replace(0.0, np.nan)
     frame["atr_pct_q25"] = frame["atr_pct"].rolling(window=200, min_periods=50).quantile(0.25)
     frame["volume_ma20"] = sma(frame["volume"], 20)
+    frame["ema20"] = ema(frame["close"], 20)
     frame["ema50"] = ema(frame["close"], 50)
+    frame["close_prev"] = frame["close"].shift(1)
+    frame["donchian_high"] = donchian_prior_high(frame["high"], donchian_n)
 
     trend = resample_ohlcv(frame[["open", "high", "low", "close", "volume"]], trend_timeframe)
     trend["ema200_4h"] = ema(trend["close"], 200)

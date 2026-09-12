@@ -26,7 +26,7 @@ from alicia.session import (
     SessionWindow,
     parse_hhmm,
 )
-from alicia.strategy import ExtraFilters, STOP_ATR_MULT, TP_ATR_MULT
+from alicia.strategy import DONCHIAN_N, ExtraFilters, SIGNALS, STOP_ATR_MULT, STOP_MODES, TP_ATR_MULT
 from alicia.orderbook import (
     fetch_public_order_book_with_fallback,
     load_book_json,
@@ -94,7 +94,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--profile",
         default=None,
         choices=sorted(name for name in PROFILES if name != "default"),
-        help="Named experiment bundle. us-session = US hours + higher-TF (not the 1h/4h product default).",
+        help="Named experiment bundle (not the 1h/4h RSI product default). "
+        "breakout / breakout-us = Donchian + EMA200; us-session = RSI in NY peak.",
     )
     bt.add_argument(
         "--timeframe",
@@ -164,6 +165,31 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Experiment: after +N×R favorable, move stop to cost-aware breakeven",
+    )
+    bt.add_argument(
+        "--signal",
+        default=None,
+        choices=list(SIGNALS),
+        help="Entry family: rsi (product default), breakout (Donchian + EMA200), "
+        "or pullback (EMA20 reclaim). Profiles may set this.",
+    )
+    bt.add_argument(
+        "--donchian-n",
+        type=int,
+        default=None,
+        help=f"Prior N-bar high for --signal breakout (default: {DONCHIAN_N})",
+    )
+    bt.add_argument(
+        "--trail-atr",
+        type=float,
+        default=None,
+        help="If set, trail the stop by this ×ATR after each completed bar (no fixed TP)",
+    )
+    bt.add_argument(
+        "--stop-mode",
+        default=None,
+        choices=list(STOP_MODES),
+        help="Initial stop: atr (product 1.5×ATR) or bar-low (breakout-bar low if below fill)",
     )
 
     dry = sub.add_parser(
@@ -241,13 +267,7 @@ def _session_from_args(args) -> SessionWindow | None:
     end_raw = getattr(args, "session_end", None)
     if preset_name:
         base = SESSION_PRESETS[preset_name]
-    elif profile_name in {
-        "us-session",
-        "us-session-1h",
-        "us-peak-1h",
-        "us-peak-best",
-        "us-peak-all",
-    }:
+    elif profile_name and profile_name in PROFILES and PROFILES[profile_name].session is not None:
         base = PROFILES[profile_name].session
     elif start_raw or end_raw:
         base = SESSION_PRESETS["us-primary"]
@@ -438,12 +458,27 @@ def main(argv: list[str] | None = None) -> int:
         breakeven_r = getattr(args, "breakeven_r", None)
         if breakeven_r is None:
             breakeven_r = spec.breakeven_r
+        signal = getattr(args, "signal", None) or spec.signal or "rsi"
+        donchian_n = (
+            int(args.donchian_n)
+            if getattr(args, "donchian_n", None) is not None
+            else spec.donchian_n
+        )
+        trail_atr = (
+            float(args.trail_atr)
+            if getattr(args, "trail_atr", None) is not None
+            else spec.trail_atr
+        )
+        stop_mode = getattr(args, "stop_mode", None) or spec.stop_mode or "atr"
         extras_on = (
             extra.require_ema_slope
             or extra.require_ema50
             or extra.chop_filter
             or extra.rsi_from is not None
             or breakeven_r
+            or signal != "rsi"
+            or trail_atr is not None
+            or stop_mode != "atr"
         )
         if entry_tf == "1m":
             print(
@@ -468,14 +503,28 @@ def main(argv: list[str] | None = None) -> int:
                 bits.append(f"rsi-from {extra.rsi_from:g}")
             if breakeven_r is not None:
                 bits.append(f"BE@{breakeven_r:g}R")
+            if signal != "rsi":
+                bits.append(f"signal {signal}")
+            if signal == "breakout":
+                bits.append(f"Donchian {donchian_n}")
+            if trail_atr is not None:
+                bits.append(f"trail {trail_atr:g}×ATR")
+            if stop_mode != "atr":
+                bits.append(f"stop-mode {stop_mode}")
+            exits = (
+                f"stop {stop_atr:g}×ATR / trail {trail_atr:g}×ATR (no fixed TP)"
+                if trail_atr is not None
+                else (
+                    f"stop {stop_atr:g}×ATR / TP {tp_atr:g}×ATR "
+                    f"(RR 1:{tp_atr / stop_atr:g})"
+                )
+            )
             print(
                 f"EXPERIMENT: profile={profile_name} / {entry_tf} entry / "
-                f"{trend_tf} EMA200 / "
-                f"stop {stop_atr:g}×ATR / TP {tp_atr:g}×ATR "
-                f"(RR 1:{tp_atr / stop_atr:g})"
+                f"{trend_tf} EMA200 / {exits}"
                 + (f" / {session.label}" if session else "")
                 + (f" / extras: {', '.join(bits)}" if bits else "")
-                + ". Product default remains 1h/4h 24/7 with TP=2×ATR. "
+                + ". Product default remains 1h/4h 24/7 RSI with TP=2×ATR. "
                 "Order-book filters skipped (no historical L2)."
             )
         result = run_backtest(
@@ -491,6 +540,10 @@ def main(argv: list[str] | None = None) -> int:
             profile=profile_name,
             extra=extra,
             breakeven_r=breakeven_r,
+            signal=signal,
+            donchian_n=donchian_n,
+            trail_atr=trail_atr,
+            stop_mode=stop_mode,
         )
         print(format_report(result))
         return 0

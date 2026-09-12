@@ -113,6 +113,15 @@ def test_4h_experiment_uses_completed_12h_ema200():
 
 def test_attach_indicators_adds_expected_columns():
     frame = attach_indicators(generate_sample_ohlcv(n_1h=900, seed=2))
-    for col in ("rsi_14", "rsi_14_prev", "atr_14", "volume_ma20", "ema200_4h"):
+    for col in (
+        "rsi_14",
+        "rsi_14_prev",
+        "atr_14",
+        "volume_ma20",
+        "ema200_4h",
+        "ema20",
+        "donchian_high",
+        "close_prev",
+    ):
         assert col in frame.columns
     assert frame["atr_14"].dropna().gt(0).all()

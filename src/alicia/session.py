@@ -103,7 +103,7 @@ SESSION_PRESETS = {
 
 @dataclass(frozen=True)
 class StrategyProfile:
-    """Named experiment bundle. Product default is 'default' (no session, 1h/4h)."""
+    """Named experiment bundle. Product default is 'default' (no session, 1h/4h, RSI)."""
 
     name: str
     entry_timeframe: str
@@ -113,6 +113,10 @@ class StrategyProfile:
     stop_atr: float = 1.5
     extra: ExtraFilters = ExtraFilters()
     breakeven_r: float | None = None
+    signal: str = "rsi"
+    donchian_n: int = 20
+    trail_atr: float | None = None
+    stop_mode: str = "atr"
 
 
 PROFILE_US_SESSION = StrategyProfile(
@@ -162,6 +166,79 @@ PROFILE_US_PEAK_ALL = StrategyProfile(
     breakeven_r=1.0,
 )
 
+# Second signal family: Donchian breakout (not RSI). Same risk/kill-switch/session helpers.
+PROFILE_BREAKOUT = StrategyProfile(
+    name="breakout",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=2.0,
+    stop_atr=1.5,
+    signal="breakout",
+    donchian_n=20,
+    stop_mode="atr",
+)
+
+PROFILE_BREAKOUT_US = StrategyProfile(
+    name="breakout-us",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=US_PEAK,
+    reward_risk=2.0,
+    stop_atr=1.5,
+    signal="breakout",
+    donchian_n=20,
+    stop_mode="atr",
+)
+
+PROFILE_BREAKOUT_TRAIL = StrategyProfile(
+    name="breakout-trail",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=None,
+    stop_atr=1.5,
+    signal="breakout",
+    donchian_n=20,
+    trail_atr=1.5,
+    stop_mode="atr",
+)
+
+PROFILE_BREAKOUT_US_TRAIL = StrategyProfile(
+    name="breakout-us-trail",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=US_PEAK,
+    reward_risk=None,
+    stop_atr=1.5,
+    signal="breakout",
+    donchian_n=20,
+    trail_atr=1.5,
+    stop_mode="atr",
+)
+
+PROFILE_BREAKOUT_2H = StrategyProfile(
+    name="breakout-2h",
+    entry_timeframe="2h",
+    trend_timeframe="8h",
+    session=None,
+    reward_risk=2.0,
+    stop_atr=1.5,
+    signal="breakout",
+    donchian_n=20,
+    stop_mode="atr",
+)
+
+PROFILE_PULLBACK = StrategyProfile(
+    name="pullback",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=2.0,
+    stop_atr=1.5,
+    signal="pullback",
+)
+
 PROFILES = {
     "default": StrategyProfile("default", "1h", "4h", None, None, 1.5),
     "us-session": PROFILE_US_SESSION,
@@ -169,6 +246,12 @@ PROFILES = {
     "us-peak-1h": PROFILE_US_PEAK_1H,
     "us-peak-best": PROFILE_US_PEAK_BEST,
     "us-peak-all": PROFILE_US_PEAK_ALL,
+    "breakout": PROFILE_BREAKOUT,
+    "breakout-us": PROFILE_BREAKOUT_US,
+    "breakout-trail": PROFILE_BREAKOUT_TRAIL,
+    "breakout-us-trail": PROFILE_BREAKOUT_US_TRAIL,
+    "breakout-2h": PROFILE_BREAKOUT_2H,
+    "pullback": PROFILE_PULLBACK,
 }
 
 

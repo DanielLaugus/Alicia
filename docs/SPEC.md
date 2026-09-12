@@ -125,6 +125,20 @@ Winning bundle after a small A/B (see `docs/BACKTEST.md` § US session bot):
 
 Do not promote this profile to the product default unless a later sample is clearly profitable after fees.
 
+## Optional second signal family — breakout / trend-follow
+
+**Not the product default.** Product Rule 2 stays **RSI(14) cross up through 40 + volume**. This family is a separate LONG-only entry, enabled with `--signal breakout` or `--profile breakout` / `breakout-us`. Risk, sizing, kill-switch, and session windows are reused.
+
+| Item | Value |
+| --- | --- |
+| Trend filter | Same Rule 1: price above **completed** trend-TF EMA200 (profiles use 4h entry / 12h EMA200). Optional `--ema-slope` requires a rising EMA200. |
+| Entry (primary) | **Donchian / N-bar high breakout.** Close crosses **above** the prior N-bar high (default N=20). Channel = `high.rolling(N).max().shift(1)` — current bar excluded (no lookahead). Re-entry requires a fresh cross, not “close still above the channel”. **No RSI. No volume gate.** |
+| Entry (optional A/B) | `--signal pullback` / `--profile pullback`: still above EMA200, enter when close **reclaims EMA20** after `prev close < EMA20`. |
+| Stop / TP | Default experiment: 1.5×ATR stop + RR 1:2 (TP 3.0×ATR). A/B: `--trail-atr 1.5` (ratchet stop on completed close; no fixed TP) or `--stop-mode bar-low` (breakout-bar low if below fill, else ATR). Same-bar stop-before-TP still applies. |
+| Sessions | `breakout` = 24/7 on 4h. `breakout-us` = NY peak `[09:00, 13:00) America/New_York` weekdays only (same window as `us-session`). |
+
+See `docs/BACKTEST.md` for the comparison vs product RSI and `us-session`. Do not silently replace the RSI default.
+
 ## Execution assumptions (backtest)
 
 - Fees: `FEE_BPS` on each side (entry and exit), applied to fill notional.
