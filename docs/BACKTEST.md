@@ -18,14 +18,16 @@ Public candle history has no matching historical order book. We do **not** inven
 
 Treat the table below as **OHLCV + fees + fixed slippage only**. Live/paper trade counts will be lower once the book gate blocks wide/thin/ask-heavy snapshots.
 
+Paper/live defaults are now tighter (**spread ≤ 2 bps**, **imbalance ≥ +0.20**, **≥ 2.0 BTC bids within 5 bps of mid**). Those gates still **do not run** in this backtest.
+
 ## Latest run
 
 | Item | Value |
 | --- | --- |
-| Run at | 2026-09-12 (UTC) |
+| Run at | 2026-09-12 17:00 UTC (re-run after tighter OB defaults; OB still skipped) |
 | Venue | OKX public spot (`okx`) — Binance returned HTTP 451 from this runner; download fell back automatically |
 | Symbol / TF | BTC/USDT · 1h (4h derived) |
-| Bars | 17,519 · 2024-09-12 17:00 UTC → 2026-09-12 15:00 UTC |
+| Bars | 17,520 · 2024-09-12 17:00 UTC → 2026-09-12 16:00 UTC |
 | Cache | `data/cache/okx_BTCUSDT_1h.csv` |
 | Capital | €2,000 (USDT treated 1:1) |
 | Fees / slippage | 10 bps per side · 5 bps adverse |
