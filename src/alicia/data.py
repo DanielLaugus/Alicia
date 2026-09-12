@@ -29,6 +29,18 @@ TIMEFRAME_MS = {
 
 FetchFn = Callable[[str, str, int | None, int], list]
 
+# Tried in order when the preferred venue geo-blocks public history (no keys).
+PUBLIC_FALLBACKS = (
+    "binance",
+    "okx",
+    "kucoin",
+    "gate",
+    "bitstamp",
+    "mexc",
+    "bitfinex",
+    "htx",
+)
+
 
 def cache_dir(path: str | Path | None = None) -> Path:
     raw = path or os.getenv("DATA_CACHE_DIR") or DEFAULT_CACHE_DIR
@@ -47,6 +59,58 @@ def cache_csv_path(
 
 def cache_meta_path(csv_path: Path) -> Path:
     return csv_path.with_suffix(".meta.json")
+
+
+def active_pointer_path(directory: str | Path | None = None) -> Path:
+    return cache_dir(directory) / "active.json"
+
+
+def write_active_pointer(
+    *,
+    exchange_id: str,
+    symbol: str,
+    timeframe: str,
+    csv_path: Path,
+    directory: str | Path | None = None,
+) -> None:
+    pointer = active_pointer_path(directory)
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(
+        json.dumps(
+            {
+                "exchange": exchange_id,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "csv": str(csv_path),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def resolve_cached_1h(
+    exchange_id: str,
+    symbol: str,
+    directory: str | Path | None = None,
+) -> Path | None:
+    """Preferred cache, then the last successful download pointer, then a unique match."""
+    directory = cache_dir(directory)
+    preferred = cache_csv_path(exchange_id, symbol, "1h", directory)
+    if preferred.exists():
+        return preferred
+    pointer = active_pointer_path(directory)
+    if pointer.exists():
+        payload = json.loads(pointer.read_text(encoding="utf-8"))
+        candidate = Path(payload.get("csv", ""))
+        if candidate.exists():
+            return candidate
+    safe = symbol.replace("/", "").replace(":", "")
+    matches = sorted(directory.glob(f"*_{safe}_1h.csv"))
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def bars_to_frame(raw: Iterable[list]) -> pd.DataFrame:
@@ -125,6 +189,16 @@ def _public_exchange(exchange_id: str):
     return cls({"enableRateLimit": True, "timeout": 30_000})
 
 
+def make_ccxt_fetch(exchange_id: str) -> FetchFn:
+    """One public client for the whole pagination loop (keeps rate-limit state)."""
+    exchange = _public_exchange(exchange_id)
+
+    def _fetch(symbol: str, timeframe: str, since_ms: int | None, limit: int) -> list:
+        return exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since_ms, limit=limit)
+
+    return _fetch
+
+
 def ccxt_fetch(
     exchange_id: str,
     symbol: str,
@@ -132,8 +206,7 @@ def ccxt_fetch(
     since_ms: int | None,
     limit: int,
 ) -> list:
-    exchange = _public_exchange(exchange_id)
-    return exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since_ms, limit=limit)
+    return make_ccxt_fetch(exchange_id)(symbol, timeframe, since_ms, limit)
 
 
 def paginate_ohlcv(
@@ -144,6 +217,7 @@ def paginate_ohlcv(
     until_ms: int | None = None,
     limit: int = PAGE_LIMIT,
     fetch: FetchFn,
+    on_page: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     if timeframe not in TIMEFRAME_MS:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
@@ -161,7 +235,10 @@ def paginate_ohlcv(
         chunks.extend(batch)
         last_seen = batch[-1][0]
         cursor = last_seen + step
-        if len(batch) < limit:
+        if on_page is not None:
+            on_page(len(chunks), last_seen)
+        # A short page is often the venue max (OKX=300), not the end of history.
+        if cursor >= end:
             break
     frame = bars_to_frame(chunks)
     if frame.empty:
@@ -223,6 +300,7 @@ def download_ohlcv(
     force: bool = False,
     fetch: FetchFn | None = None,
     derive_4h: bool = True,
+    on_page: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """Download public spot OHLCV and persist under the cache directory.
 
@@ -241,11 +319,7 @@ def download_ohlcv(
     if existing is not None and not existing.empty and since_ms >= until_ms:
         return drop_incomplete_last_bar(existing, timeframe)
 
-    worker: FetchFn
-    if fetch is not None:
-        worker = fetch
-    else:
-        worker = lambda sym, tf, s, lim: ccxt_fetch(exchange_id, sym, tf, s, lim)
+    worker: FetchFn = fetch if fetch is not None else make_ccxt_fetch(exchange_id)
 
     fresh = paginate_ohlcv(
         symbol=symbol,
@@ -253,6 +327,7 @@ def download_ohlcv(
         since_ms=since_ms,
         until_ms=until_ms,
         fetch=worker,
+        on_page=on_page,
     )
     combined = merge_ohlcv(existing, fresh) if existing is not None else fresh
     combined = drop_incomplete_last_bar(combined, timeframe)
@@ -265,7 +340,89 @@ def download_ohlcv(
         h4 = resample_ohlcv_4h(combined)
         h4_path = cache_csv_path(exchange_id, symbol, "4h", directory)
         write_cache(h4, h4_path, _meta_for(h4, exchange_id, symbol, "4h"))
+    write_active_pointer(
+        exchange_id=exchange_id,
+        symbol=symbol,
+        timeframe=timeframe,
+        csv_path=path,
+        directory=directory,
+    )
     return combined
+
+
+def history_covers_request(
+    frame: pd.DataFrame,
+    *,
+    years: float,
+    since: str | None,
+    until: str | None = None,
+) -> bool:
+    """Reject venues that ignore ``since`` or stop after one short page."""
+    if frame.empty:
+        return False
+    end = pd.Timestamp(until, tz="UTC") if until else pd.Timestamp.now(tz="UTC")
+    start = (
+        pd.Timestamp(since, tz="UTC")
+        if since
+        else end - pd.Timedelta(days=int(years * 365))
+    )
+    first_gap = frame.index[0] - start
+    last_gap = end - frame.index[-1]
+    return first_gap <= pd.Timedelta(days=14) and last_gap <= pd.Timedelta(days=7)
+
+
+def download_ohlcv_with_fallback(
+    *,
+    exchange_id: str = "binance",
+    symbol: str = "BTC/USDT",
+    years: float = 2.0,
+    since: str | None = None,
+    until: str | None = None,
+    directory: str | Path | None = None,
+    force: bool = False,
+    fallbacks: tuple[str, ...] | None = None,
+    on_page: Callable[[int, int], None] | None = None,
+    on_try: Callable[[str], None] | None = None,
+    on_skip: Callable[[str, str], None] | None = None,
+) -> tuple[pd.DataFrame, str]:
+    """Try the preferred public venue, then others that honor historical ``since``."""
+    chain: list[str] = []
+    for name in (exchange_id, *(fallbacks if fallbacks is not None else PUBLIC_FALLBACKS)):
+        if name not in chain:
+            chain.append(name)
+    errors: list[str] = []
+    for name in chain:
+        if on_try:
+            on_try(name)
+        try:
+            frame = download_ohlcv(
+                exchange_id=name,
+                symbol=symbol,
+                years=years,
+                since=since,
+                until=until,
+                directory=directory,
+                force=force,
+                on_page=on_page,
+            )
+        except Exception as exc:
+            if on_skip:
+                on_skip(name, str(exc))
+            errors.append(f"{name}: {exc}")
+            continue
+        if not history_covers_request(frame, years=years, since=since, until=until):
+            msg = (
+                f"only {len(frame)} bars "
+                f"({frame.index[0]} → {frame.index[-1]}); venue likely ignores since"
+            )
+            if on_skip:
+                on_skip(name, msg)
+            errors.append(f"{name}: {msg}")
+            continue
+        return frame, name
+    raise RuntimeError(
+        "No public venue returned enough historical OHLCV.\n" + "\n".join(errors)
+    )
 
 
 def load_ohlcv(

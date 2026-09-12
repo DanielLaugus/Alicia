@@ -6,14 +6,18 @@ import argparse
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 from alicia.backtest import format_report, run_backtest
 from alicia.config import load_settings
 from alicia.data import (
     cache_csv_path,
     cache_dir,
     download_ohlcv,
+    download_ohlcv_with_fallback,
     load_ohlcv,
     read_cache,
+    resolve_cached_1h,
 )
 from alicia.paper import evaluate_latest, load_paper_ohlcv
 from alicia.safety import FORBIDDEN_ACTIONS
@@ -45,6 +49,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Re-download the full window instead of appending to the cache",
+    )
+    dl.add_argument(
+        "--no-fallback",
+        action="store_true",
+        help="Do not try other public venues if the preferred exchange is blocked",
     )
 
     bt = sub.add_parser(
@@ -118,9 +127,10 @@ def _resolve_ohlcv(args, settings):
     if getattr(args, "synthetic", False):
         return load_ohlcv(synthetic=True), "synthetic"
     directory = cache_dir(getattr(args, "cache_dir", None))
-    path = cache_csv_path(settings.exchange_id, settings.symbol, "1h", directory)
-    if not path.exists():
-        print(_missing_cache_message(path), file=sys.stderr)
+    path = resolve_cached_1h(settings.exchange_id, settings.symbol, directory)
+    if path is None:
+        preferred = cache_csv_path(settings.exchange_id, settings.symbol, "1h", directory)
+        print(_missing_cache_message(preferred), file=sys.stderr)
         return None, None
     return read_cache(path), f"cache:{path}"
 
@@ -140,21 +150,42 @@ def main(argv: list[str] | None = None) -> int:
         directory = cache_dir(args.cache_dir)
         print(
             f"Downloading public {symbol} 1h from {exchange} "
-            f"(no API key) → {directory}/ ..."
+            f"(no API key; fallbacks if geo-blocked) → {directory}/ ..."
         )
+        def _progress(rows: int, last_ms: int) -> None:
+            last = pd.Timestamp(last_ms, unit="ms", tz="UTC")
+            print(f"  … {rows} bars through {last}")
+
         try:
-            frame = download_ohlcv(
-                exchange_id=exchange,
-                symbol=symbol,
-                years=args.years,
-                since=args.since,
-                until=args.until,
-                directory=directory,
-                force=args.force,
-            )
+            if args.no_fallback:
+                frame = download_ohlcv(
+                    exchange_id=exchange,
+                    symbol=symbol,
+                    years=args.years,
+                    since=args.since,
+                    until=args.until,
+                    directory=directory,
+                    force=args.force,
+                    on_page=_progress,
+                )
+                used = exchange
+            else:
+                frame, used = download_ohlcv_with_fallback(
+                    exchange_id=exchange,
+                    symbol=symbol,
+                    years=args.years,
+                    since=args.since,
+                    until=args.until,
+                    directory=directory,
+                    force=args.force,
+                    on_page=_progress,
+                    on_try=lambda name: print(f"Trying {name} …"),
+                    on_skip=lambda name, msg: print(f"  skip {name}: {msg}", file=sys.stderr),
+                )
         except Exception as exc:
             print(f"Download failed: {exc}", file=sys.stderr)
             return 1
+        exchange = used
         path = cache_csv_path(exchange, symbol, "1h", directory)
         h4_path = cache_csv_path(exchange, symbol, "4h", directory)
         print(f"Cached {len(frame)} 1h bars: {frame.index[0]} → {frame.index[-1]}")
@@ -209,13 +240,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.public:
             ohlcv = load_paper_ohlcv(settings, use_public=True)
         else:
-            path = cache_csv_path(
+            path = resolve_cached_1h(
                 settings.exchange_id,
                 settings.symbol,
-                "1h",
                 cache_dir(args.cache_dir),
             )
-            if path.exists():
+            if path is not None:
                 ohlcv = read_cache(path)
             else:
                 ohlcv = load_paper_ohlcv(settings)

@@ -1,11 +1,6 @@
 # Real-data backtest
 
-This file records the last **public BTC/USDT spot** backtest run on cached 1h history.
-
-- Data: ccxt public OHLCV, **no API key**
-- 4h EMA200: resampled from the same 1h series (see `docs/SPEC.md`)
-- Cache path: `data/cache/` (gitignored)
-- Unit tests do **not** download this file; refresh it locally with:
+Public **BTC/USDT spot** 1h history via ccxt (**no API key**). 4h EMA200 is resampled from the same 1h series (`docs/SPEC.md`). Cache is `data/cache/` (gitignored).
 
 ```bash
 pip install -e ".[exchange]"
@@ -13,8 +8,44 @@ python -m alicia download --years 2
 python -m alicia backtest
 ```
 
-Numbers below are filled after a real download + backtest. If this section still says “pending”, run the commands above.
+Unit tests mock the exchange and do **not** perform this download.
 
 ## Latest run
 
-Pending — will be replaced after the first successful public-data backtest.
+| Item | Value |
+| --- | --- |
+| Run at | 2026-09-12 (UTC) |
+| Venue | OKX public spot (`okx`) — Binance returned HTTP 451 from this runner; download fell back automatically |
+| Symbol / TF | BTC/USDT · 1h (4h derived) |
+| Bars | 17,519 · 2024-09-12 17:00 UTC → 2026-09-12 15:00 UTC |
+| Cache | `data/cache/okx_BTCUSDT_1h.csv` |
+| Capital | €2,000 (USDT treated 1:1) |
+| Fees / slippage | 10 bps per side · 5 bps adverse |
+| Risk | 2% of equity to stop · €200 small-notional rule · one position |
+| Event pauses | example CPI/FOMC/NFP calendar on (`data/events.example.json`) |
+
+### Results (fees + slippage included)
+
+| Metric | Value |
+| --- | --- |
+| Closed trades | **92** (0 open at end) |
+| Wins / losses | 38 / 54 |
+| Win rate | **41.30%** |
+| Start capital | 2,000.00 |
+| End equity | 1,498.36 |
+| Return | **−25.08%** |
+| Max drawdown | **−28.92%** (peak-to-trough on the equity curve) |
+| Closed PnL | −501.64 USDT |
+| Fees paid | 316.00 USDT |
+| Slippage cost | 158.00 USDT |
+| Fees+slippage impact | **419.57 USDT** (zero-cost end equity 1,917.93 vs 1,498.36) |
+
+Last fills (newest):
+
+- 2026-08-26 16:00 · TP · pnl +17.81
+- 2026-08-31 01:00 · TP · pnl +13.42
+- 2026-09-02 14:00 · TP · pnl +15.11
+- 2026-09-08 10:00 · stop · pnl −12.97
+- 2026-09-08 15:00 · TP · pnl +11.18
+
+This window lost money after costs. The zero-cost run is still slightly negative, so the edge is not rescued by turning fees off — costs made a large existing drag worse. Numbers are a historical simulation, not a live or paper trading record.

@@ -56,9 +56,12 @@ python -m alicia backtest
 
 Useful variants:
 
+If Binance (or another venue) geo-blocks public REST, `download` tries other public spot venues (OKX, KuCoin, Gate, …) and records the one that worked in `data/cache/active.json`. `backtest` follows that pointer.
+
 ```bash
-python -m alicia download --exchange bybit --years 2   # if Binance is blocked
+python -m alicia download --exchange okx --years 2
 python -m alicia download --since 2024-01-01 --force
+python -m alicia download --no-fallback                # preferred venue only
 python -m alicia backtest --csv path/to/btcusdt_1h.csv
 python -m alicia backtest --synthetic                  # built-in demo series
 ```

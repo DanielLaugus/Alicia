@@ -9,10 +9,12 @@ from alicia.data import (
     cache_csv_path,
     download_ohlcv,
     drop_incomplete_last_bar,
+    history_covers_request,
     load_ohlcv,
     merge_ohlcv,
     paginate_ohlcv,
     read_cache,
+    resolve_cached_1h,
 )
 from alicia.sample_data import generate_sample_ohlcv, ohlcv_to_csv
 
@@ -77,6 +79,21 @@ def test_paginate_walks_since_cursor():
     assert len(fake.calls) >= 4
 
 
+def test_paginate_continues_when_exchange_page_is_smaller_than_limit():
+    rows = _catalog(900)
+    fake = FakePublicExchange(rows, page=300)
+    frame = paginate_ohlcv(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since_ms=rows[0][0],
+        until_ms=rows[-1][0] + 3_600_000,
+        limit=1000,
+        fetch=fake,
+    )
+    assert len(frame) == 900
+    assert len(fake.calls) >= 3
+
+
 def test_cache_roundtrip(tmp_path):
     src = generate_sample_ohlcv(n_1h=48, seed=1)
     path = tmp_path / "sample.csv"
@@ -135,6 +152,55 @@ def test_download_appends_incrementally(tmp_path):
     assert len(frame) == 30
     # Incremental call should start after the last cached bar, not from year window.
     assert second.calls[0][2] > rows[0][0]
+
+
+def test_history_covers_request_rejects_recent_window_only():
+    idx = pd.date_range("2026-08-13", periods=720, freq="1h", tz="UTC")
+    frame = pd.DataFrame(
+        {"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},
+        index=idx,
+    )
+    assert not history_covers_request(frame, years=2.0, since=None)
+    long_idx = pd.date_range("2024-09-01", periods=4000, freq="1h", tz="UTC")
+    long = frame.reindex(long_idx).ffill()
+    until = str(long.index[-1] + pd.Timedelta(hours=1))
+    assert history_covers_request(long, years=0.4, since="2024-09-01", until=until)
+
+
+def test_short_recent_cache_does_not_cover_two_years(tmp_path):
+    rows = _catalog(20, start="2026-09-01")
+    fake = FakePublicExchange(rows, page=50)
+    until = str(pd.Timestamp(rows[-1][0] + 3_600_000, unit="ms", tz="UTC"))
+    short = download_ohlcv(
+        exchange_id="kraken-like",
+        symbol="BTC/USDT",
+        since="2024-01-01",
+        until=until,
+        directory=tmp_path,
+        force=True,
+        fetch=fake,
+        derive_4h=False,
+    )
+    assert not history_covers_request(short, years=2.0, since="2024-01-01")
+
+
+def test_resolve_cached_1h_uses_active_pointer(tmp_path):
+    rows = _catalog(24, start="2024-01-01")
+    fake = FakePublicExchange(rows, page=50)
+    until = str(pd.Timestamp(rows[-1][0] + 3_600_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        since="2024-01-01",
+        until=until,
+        directory=tmp_path,
+        force=True,
+        fetch=fake,
+        derive_4h=False,
+    )
+    path = resolve_cached_1h("binance", "BTC/USDT", tmp_path)
+    assert path is not None
+    assert path.name.startswith("okx_")
 
 
 def test_fixture_csv_loads():
