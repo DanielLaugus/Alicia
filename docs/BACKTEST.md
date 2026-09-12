@@ -330,3 +330,78 @@ python -m alicia backtest --profile us-peak-all         # all gates; 0 trades on
 python -m alicia backtest --ema-slope --ema50 --chop-filter --rsi-from 30 --breakeven-r 1
 ```
 
+## Second signal family — Donchian breakout (curiosity only)
+
+**Not the product default.** Product Rule 2 stays RSI(14) cross + volume. This is a separate LONG-only entry: **close crosses above the prior N-bar high**, only if price is above the completed trend-TF EMA200. Opposite of the RSI mean-reversion bounce.
+
+Design choices (see `docs/SPEC.md` § Optional second signal family):
+
+| Choice | Decision |
+| --- | --- |
+| Primary entry | Donchian N=20 **cross** (not “still above the channel”) so we do not re-enter every bar |
+| Channel | `high.rolling(N).max().shift(1)` — current bar excluded, no lookahead |
+| Trend | Price > completed 12h EMA200 on 4h bars (same higher-TF step as other 4h experiments). `--ema-slope` optional |
+| Volume / RSI | **Off.** Different family; do not smuggle the bounce filters back in |
+| Optional A/B entry | `--signal pullback` — reclaim EMA20 after `prev close < EMA20`, still > EMA200 |
+| Default exits | 1.5×ATR stop + RR 1:2 (TP 3.0×ATR). Same-bar **stop first** |
+| Exit A/B | `--trail-atr 1.5` ratchets the stop on each **completed** close (no intra-bar trail, no fixed TP). `--stop-mode bar-low` uses the signal-bar low if it is below the fill |
+| Sessions | `breakout` = 4h 24/7; `breakout-us` = same NY peak as `us-session` (`[09:00, 13:00)` America/New_York, weekdays) |
+| Reused | 1–3% risk-to-stop, €200 small-notional, max one position, −10% monthly kill-switch, CPI/Fed/NFP pause, 10 bps fee / 5 bps slip |
+| Not used | Historical L2 (none exists; not invented) |
+
+```bash
+python -m alicia backtest --profile breakout           # 4h/12h 24/7, Donchian 20, RR 1:2
+python -m alicia backtest --profile breakout-us        # + NY peak
+python -m alicia backtest --profile breakout-trail     # 24/7, trail 1.5×ATR, no fixed TP
+python -m alicia backtest --profile breakout-us-trail
+python -m alicia backtest --profile breakout-2h
+python -m alicia backtest --profile pullback
+python -m alicia backtest --signal breakout --timeframe 4h --reward-risk 2 --ema-slope
+```
+
+Same ~2y OKX window as the product run: 4h native cache 4,379 bars · 2024-09-12 20:00 → 2026-09-12 12:00 UTC (`data/cache/okx_BTCUSDT_4h.csv`). 2h variant uses the native 8,759-bar OKX 2h file. Capital €2,000 · 2% risk · 10 bps / 5 bps. Order book skipped.
+
+### Full-sample comparison (fees + slippage included)
+
+| Variant | Trades | WR | Return | Max DD | Zero-cost ret | Expectancy |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| **Product RSI 1h/4h 24/7** (default) | 92 | 41.30% | **−25.08%** | −28.92% | −4.10% | −5.45 |
+| **us-session RSI 4h NY peak RR 1:2** | 8+1 | 37.50% | **−0.69%** | −6.61% | +1.31% | −0.26 |
+| breakout-trail 4h 24/7 (1.5×ATR trail) | 47 | 31.91% | −6.23% | −19.47% | **+6.66%** | −2.65 |
+| breakout 4h + rising EMA200, RR 1:2 | 32 | 37.50% | −6.61% | −13.40% | +0.99% | −4.13 |
+| **breakout-us** 4h NY peak RR 1:2 | 25 | 36.00% | −6.72% | −11.98% | −0.79% | −5.37 |
+| breakout-us-trail | 25 | 24.00% | −9.22% | −17.20% | −2.59% | −7.37 |
+| **breakout** 4h 24/7 RR 1:2 ATR | 54 | 33.33% | −16.30% | −28.11% | −4.67% | −6.04 |
+| breakout 4h N=55 RR 1:2 | 44 | 31.82% | −17.04% | −25.29% | −7.69% | −7.74 |
+| breakout 4h RR 1:2 bar-low stop | 55 | 32.73% | −18.82% | −29.11% | −6.92% | −6.84 |
+| pullback 4h EMA20 reclaim RR 1:2 | 62 | 32.26% | −22.38% | −23.01% | −10.23% | −7.22 |
+| breakout-2h 24/7 RR 1:2 | 113 | 30.97% | −30.86% | −34.72% | −3.55% | −5.46 |
+| breakout 4h N=10 RR 1:2 | 76 | 26.32% | −38.00% | −43.45% | −27.05% | −10.00 |
+
+Notes:
+
+- Product and us-session **reproduced** the previously recorded −25.08% and −0.69%.
+- `breakout` 24/7 tripped the **−10% monthly kill-switch** (−10.74%) on this sample.
+- ATR stop beat bar-low. N=20 beat N=10 (noise) and N=55 (fewer, still worse). Pullback is not better than Donchian.
+- **Trail 24/7** is the only breakout variant with a clear **zero-cost** edge (+6.66%). After 10 bps / 5 bps it is still −6.23% — same “fees kill it” pattern as `us-peak-1h`. Do not treat it as live-ready.
+- Rising EMA200 and `breakout-us` cut trades and drawdown vs 24/7 RR 1:2, but both remain worse than us-session RSI after costs.
+
+### Train / OOS (2025-09-12 UTC split; indicators on the full series, entries gated)
+
+| Variant | Train | OOS |
+| --- | --- | --- |
+| product RSI 1h/4h | 64 · −20.16% | 28 · −6.17% |
+| us-session RSI 4h | 6 · −1.55% | 2+1 · **+0.87%** |
+| breakout 4h 24/7 RR 1:2 | 36 · −13.87% | 21 · −6.95% |
+| breakout-us | 13 · −4.38% | 12 · −2.44% |
+| breakout-trail | 30 · −5.04% | 18 · −2.66% |
+| breakout + rising EMA200 | 20 · −5.74% | 12 · −0.93% |
+| pullback 4h | 41 · −9.27% | 21 · −14.45% |
+| breakout-2h | 70 · −22.49% | 43 · −10.80% |
+
+Enough trades to read: every Donchian / pullback variant **loses in both windows**. us-session’s tiny OOS plus is still n=2.
+
+### Recommendation
+
+**Curiosity profiles only — do not promote.** Product default stays 1h/4h RSI. `us-session` remains the least-bad named profile after costs (−0.69%, small n). Breakout is a valid **second signal family** for later research (especially trail or rising-EMA if fees ever drop), but on this ~2y OKX sample with honest costs it is not an upgrade.
+
