@@ -260,6 +260,50 @@ def test_2h_download_does_not_overwrite_1h_active_pointer(tmp_path):
     assert cache_csv_path("okx", "BTC/USDT", "2h", tmp_path).exists()
 
 
+def test_resolve_cached_prefers_active_venue_when_multiple_4h(tmp_path):
+    from alicia.data import resolve_cached, write_active_pointer
+
+    rows = _catalog(24, start="2024-01-01")
+    fake = FakePublicExchange(rows, page=80)
+    until = str(pd.Timestamp(rows[-1][0] + 3_600_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since="2024-01-01",
+        until=until,
+        directory=tmp_path,
+        force=True,
+        fetch=fake,
+        derive_4h=True,
+    )
+    download_ohlcv(
+        exchange_id="kraken",
+        symbol="BTC/USDT",
+        timeframe="4h",
+        since="2024-01-01",
+        until=until,
+        directory=tmp_path,
+        force=True,
+        fetch=FakePublicExchange(
+            [[1_704_067_200_000 + i * 14_400_000, 1, 2, 0.5, 1.5, 1] for i in range(8)],
+            page=50,
+        ),
+        derive_4h=False,
+        update_active=False,
+    )
+    write_active_pointer(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        csv_path=cache_csv_path("okx", "BTC/USDT", "1h", tmp_path),
+        directory=tmp_path,
+    )
+    path = resolve_cached("binance", "BTC/USDT", "4h", tmp_path)
+    assert path is not None
+    assert path.name.startswith("okx_")
+
+
 def test_resolve_or_resample_builds_2h_from_1h(tmp_path):
     rows = _catalog(48, start="2024-01-01")
     fake = FakePublicExchange(rows, page=80)

@@ -149,3 +149,52 @@ Still not strong enough to promote. Default remains:
 python -m alicia backtest
 ```
 
+## 4h + 12h experiment (curiosity / tuning)
+
+**Not the product default.** Default CLI remains 1h entry / 4h EMA200 / stop **1.5×ATR** / TP **2×ATR**. This run uses **4h entry** and keeps **RR 1:2** like the 2h experiment (stop 1.5×ATR, TP 3.0×ATR) so the two higher-TF trials are comparable.
+
+```bash
+python -m alicia download --timeframe 4h --years 2
+python -m alicia backtest --timeframe 4h --reward-risk 2
+```
+
+`--timeframe 4h` derives trend as **12h** unless `--trend-timeframe` is set.
+
+| Item | Value |
+| --- | --- |
+| Run at | 2026-09-12 18:50 UTC |
+| Venue | OKX public spot `BTC/USDT` **native 4h** (Binance 451; OKX honors `since`) |
+| Entry TF | **4h** — same RSI(14) cross-up through 40 + volume > SMA20 + ATR(14) on 4h bars |
+| Trend TF | **12h EMA200** on completed 12h buckets only. Pandas resample `12h` (UTC, label/closed left) aligns to **00:00 and 12:00 UTC**. 4h→12h is a **3×** step (same spirit as product 1h→4h and 2h→8h, which were 4×). Warmup ≈ 200×12h ≈ 100 days. |
+| Stop / TP | Stop **1.5 × ATR(14, 4h)** below fill. TP **3.0 × ATR(14, 4h)** above fill. Reward = **2 ×** risk (**RR 1:2**), matching the 2h experiment — not the product TP=2×ATR (~1:1.33). |
+| Window | **~2 years**: 4,379 bars · 2024-09-12 20:00 UTC → 2026-09-12 12:00 UTC |
+| Cache | `data/cache/okx_BTCUSDT_4h.csv` (does **not** replace the 1h active pointer). If no native 4h file matches the active venue, `backtest --timeframe 4h` resamples from the 1h cache. |
+| Order book | **Skipped** — no historical L2 |
+| Fees / slippage / sizing | Same as the 1h product run (10 bps / 5 bps / 2% risk / €2,000 / −10% monthly kill-switch) |
+
+### 4h + 12h + RR 1:2 results (fees + slippage included)
+
+| Metric | 4h/12h + RR 1:2 | 2h/8h + RR 1:2 | Product 1h/4h (2y) | 1m experiment (60d) |
+| --- | --- | --- | --- | --- |
+| Trades | **22** closed (**1 open** at end) | 47 | 92 | 109 |
+| Wins / losses | **7 / 15** | 15 / 32 | 38 / 54 | 0 / 109 |
+| Win rate | **31.82%** | 31.91% | 41.30% | 0.00% |
+| Equity | 2,000.00 → **1,841.37** | 2,000.00 → 1,734.11 | 2,000.00 → 1,498.36 | 2,000.00 → 1,450.86 |
+| Return | **−7.93%** | −13.29% | −25.08% | −27.46% |
+| Max drawdown | **−14.44%** | −15.34% | −28.92% | −27.46% |
+| Closed PnL | −147.71 USDT | −265.89 USDT | −501.64 USDT | −549.14 USDT |
+| Fees / slippage | 84.13 / 42.07 USDT | 167.85 / 83.93 | 316.00 / 158.00 | 373.42 / 186.71 |
+| Cost impact | 101.19 USDT (zero-cost equity 1,942.56) | 211.40 USDT | 419.57 USDT | 603.25 USDT |
+
+Last fills (newest): 2025-09-24 08:00 stop −29.00 · 2026-05-19 08:00 stop −33.02 · 2026-09-02 16:00 TP +58.24 · 2026-09-08 16:00 stop −31.36 · 2026-09-11 16:00 **OPEN** (marked to last close; not a forced exit).
+
+Least-bad of the TF experiments so far (shallower loss and DD, fewer trades) but still **negative** after costs; zero-cost end equity 1,942.56 is still slightly underwater. Win rate matches the 2h RR 1:2 run (~32%). Monthly −10% kill-switch did **not** trip.
+
+Control on the **same native 4h/12h series** with product TP=2×ATR (no `--reward-risk`): 24 closed + 1 open, 10/14, 41.67% WR, return **−6.03%**, max DD −12.98%, closed PnL −109.50. Slightly better than RR 1:2 on this window — same pattern as 2h: the **higher entry TF** does most of the work vs 1h, not the wider target.
+
+Still not clearly strong (losing after costs, one trade still open). Do not promote. Default remains:
+
+```bash
+python -m alicia backtest
+```
+

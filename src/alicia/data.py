@@ -114,9 +114,20 @@ def resolve_cached(
                     return candidate
     safe = symbol.replace("/", "").replace(":", "")
     matches = sorted(directory.glob(f"*_{safe}_{timeframe}.csv"))
+    if not matches:
+        return None
     if len(matches) == 1:
         return matches[0]
-    return None
+    # Several venues (e.g. leftover Kraken + OKX). Prefer the 1h active venue.
+    pointer = active_pointer_path(directory)
+    if pointer.exists():
+        payload = json.loads(pointer.read_text(encoding="utf-8"))
+        venue = str(payload.get("exchange") or "")
+        if venue:
+            named = cache_csv_path(venue, symbol, timeframe, directory)
+            if named.exists():
+                return named
+    return matches[0]
 
 
 def resolve_cached_1h(
