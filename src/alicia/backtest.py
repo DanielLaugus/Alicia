@@ -12,6 +12,7 @@ from alicia.calendar import EventCalendar, calendar_from_settings
 from alicia.config import Settings, load_settings
 from alicia.indicators import attach_indicators
 from alicia.risk import MonthlyDrawdownGuard, size_from_settings
+from alicia.session import SessionWindow, session_allows_signal
 from alicia.strategy import EntryDecision, evaluate_entry, stop_price, take_profit_price
 
 
@@ -46,6 +47,8 @@ class BacktestResult:
     trend_timeframe: str = "4h"
     stop_atr_mult: float = 1.5
     tp_atr_mult: float = 2.0
+    session_label: str | None = None
+    profile: str = "default"
 
     @property
     def closed_trades(self) -> list[Trade]:
@@ -97,6 +100,8 @@ class BacktestResult:
             else round(self.zero_cost_end_equity, 4),
             "fees_slippage_impact_usdt": None if impact is None else round(impact, 4),
             "halt_events": list(self.halt_events),
+            "session": self.session_label,
+            "profile": self.profile,
         }
 
 
@@ -138,10 +143,20 @@ def run_backtest(
     trend_timeframe: str = "4h",
     stop_atr_mult: float = 1.5,
     tp_atr_mult: float = 2.0,
+    session: SessionWindow | None = None,
+    profile: str = "default",
+    entry_from: pd.Timestamp | None = None,
+    entry_until: pd.Timestamp | None = None,
 ) -> BacktestResult:
     settings = settings or load_settings()
     calendar = calendar if calendar is not None else calendar_from_settings(settings)
     frame = attach_indicators(ohlcv_1h, trend_timeframe=trend_timeframe)
+    if entry_from is not None:
+        entry_from = pd.Timestamp(entry_from)
+        entry_from = entry_from.tz_localize("UTC") if entry_from.tzinfo is None else entry_from.tz_convert("UTC")
+    if entry_until is not None:
+        entry_until = pd.Timestamp(entry_until)
+        entry_until = entry_until.tz_localize("UTC") if entry_until.tzinfo is None else entry_until.tz_convert("UTC")
 
     cash = float(settings.capital_eur)  # USDT treated 1:1 with EUR by default
     qty = 0.0
@@ -155,6 +170,8 @@ def run_backtest(
         trend_timeframe=trend_timeframe,
         stop_atr_mult=stop_atr_mult,
         tp_atr_mult=tp_atr_mult,
+        session_label=session.label if session is not None else None,
+        profile=profile,
     )
     equity_points: list[tuple[pd.Timestamp, float]] = []
 
@@ -247,6 +264,13 @@ def run_backtest(
         vol_ma = row["volume_ma20"]
         atr_v = row["atr_14"]
 
+        in_entry_span = True
+        if entry_from is not None and ts < pd.Timestamp(entry_from):
+            in_entry_span = False
+        if entry_until is not None and ts >= pd.Timestamp(entry_until):
+            in_entry_span = False
+        session_ok = in_entry_span and session_allows_signal(ts, entry_timeframe, session)
+
         decision = evaluate_entry(
             price=mark,
             ema200_4h=None if pd.isna(ema) else float(ema),
@@ -257,6 +281,7 @@ def run_backtest(
             has_open_position=has_open or pending_entry is not None,
             paused=paused,
             pause_reason=pause_reason,
+            session_ok=session_ok,
         )
         if i % max(len(frame) // 8, 1) == 0 or decision.enter:
             result.decisions_sampled.append((ts, decision))
@@ -299,6 +324,10 @@ def run_backtest(
             trend_timeframe=trend_timeframe,
             stop_atr_mult=stop_atr_mult,
             tp_atr_mult=tp_atr_mult,
+            session=session,
+            profile=profile,
+            entry_from=entry_from,
+            entry_until=entry_until,
         )
         result.zero_cost_end_equity = baseline.end_equity
     return result
@@ -312,6 +341,8 @@ def format_report(result: BacktestResult) -> str:
         f"  timeframes:    entry {s['entry_timeframe']} / trend EMA200 {s['trend_timeframe']}",
         f"  stop / TP:     {s['stop_atr_mult']:g}×ATR / {s['tp_atr_mult']:g}×ATR "
         f"(RR 1:{s['reward_risk']:g})",
+        f"  profile:       {s['profile']}"
+        + (f"  session {s['session']}" if s["session"] else "  session 24/7 (product)"),
         f"  bars:          {s['bars']}  ({s['first_bar']} → {s['last_bar']})",
         f"  trades:        {s['trades']}  (open at end: {s['open_at_end']})",
         f"  wins/losses:   {s['wins']}/{s['losses']}  (win rate {s['win_rate_pct']:.2f}%)",

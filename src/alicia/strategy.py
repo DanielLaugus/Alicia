@@ -54,12 +54,15 @@ def evaluate_entry(
     has_open_position: bool,
     paused: bool = False,
     pause_reason: str | None = None,
+    session_ok: bool = True,
 ) -> EntryDecision:
-    """Return whether a new LONG may be opened on this closed 1h bar."""
+    """Return whether a new LONG may be opened on this closed bar."""
     if paused:
         return EntryDecision(False, pause_reason or "kill-switch / pause is active")
     if has_open_position:
         return EntryDecision(False, "max one open position; no averaging down")
+    if not session_ok:
+        return EntryDecision(False, "outside session window (no new entries off-hours)")
     if ema200_4h is None or not np_finite(ema200_4h):
         return EntryDecision(False, "EMA200(4h) not ready")
     if not trend_allows_long(price, ema200_4h):

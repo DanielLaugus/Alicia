@@ -20,6 +20,12 @@ from alicia.data import (
     resolve_cached_1h,
     resolve_or_resample,
 )
+from alicia.session import (
+    PROFILES,
+    SESSION_PRESETS,
+    SessionWindow,
+    parse_hhmm,
+)
 from alicia.strategy import STOP_ATR_MULT, TP_ATR_MULT
 from alicia.orderbook import (
     fetch_public_order_book_with_fallback,
@@ -85,6 +91,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the extra zero-fee/zero-slippage run used for cost impact",
     )
     bt.add_argument(
+        "--profile",
+        default=None,
+        choices=sorted(name for name in PROFILES if name != "default"),
+        help="Named experiment bundle. us-session = US hours + higher-TF (not the 1h/4h product default).",
+    )
+    bt.add_argument(
         "--timeframe",
         default="1h",
         help="Entry timeframe (default: 1h product). 1m / 2h / 4h are curiosity experiments only.",
@@ -112,6 +124,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="reward_risk",
         help="If set, TP ATR = this × stop ATR (e.g. 2 → TP 3.0×ATR when stop is 1.5×ATR)",
+    )
+    bt.add_argument(
+        "--session",
+        default=None,
+        choices=sorted(SESSION_PRESETS),
+        help="Named UTC session window (us / us-primary / us-overlap / us-wide). Off by default.",
+    )
+    bt.add_argument("--session-start", default=None, help="UTC HH:MM session start (bar-close clock)")
+    bt.add_argument("--session-end", default=None, help="UTC HH:MM session end inclusive")
+    bt.add_argument(
+        "--all-days",
+        action="store_true",
+        help="Allow weekend session entries (US profile defaults to Mon–Fri UTC)",
     )
 
     dry = sub.add_parser(
@@ -180,6 +205,43 @@ def _missing_cache_message(path: Path) -> str:
         "  python -m alicia download --years 2\n"
         "Or pass --csv PATH or --synthetic."
     )
+
+
+def _session_from_args(args) -> SessionWindow | None:
+    preset_name = getattr(args, "session", None)
+    profile_name = getattr(args, "profile", None)
+    start_raw = getattr(args, "session_start", None)
+    end_raw = getattr(args, "session_end", None)
+    if preset_name:
+        base = SESSION_PRESETS[preset_name]
+    elif profile_name == "us-session":
+        base = PROFILES["us-session"].session
+    elif start_raw or end_raw:
+        base = SESSION_PRESETS["us-primary"]
+    else:
+        return None
+    assert base is not None
+    start = parse_hhmm(start_raw) if start_raw else base.start_minute
+    end = parse_hhmm(end_raw) if end_raw else base.end_minute
+    weekdays = False if getattr(args, "all_days", False) else base.weekdays_only
+    return SessionWindow(start, end, weekdays_only=weekdays, name=base.name)
+
+
+def _apply_profile(args) -> str:
+    """Mutate timeframe / RR from a named profile. Product default stays 1h/4h."""
+    name = getattr(args, "profile", None) or "default"
+    if name == "default":
+        return name
+    spec = PROFILES[name]
+    if args.timeframe == "1h":
+        args.timeframe = spec.entry_timeframe
+    if spec.trend_timeframe and args.trend_timeframe is None:
+        args.trend_timeframe = spec.trend_timeframe
+    if spec.reward_risk is not None and args.reward_risk is None and args.tp_atr is None:
+        args.reward_risk = spec.reward_risk
+    if spec.stop_atr is not None and args.stop_atr is None:
+        args.stop_atr = spec.stop_atr
+    return name
 
 
 def _trend_tf(entry_tf: str, override: str | None) -> str:
@@ -312,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "backtest":
+        profile_name = _apply_profile(args)
         ohlcv, source = _resolve_ohlcv(args, settings)
         if ohlcv is None:
             return 2
@@ -319,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         trend_tf = _trend_tf(entry_tf, args.trend_timeframe)
         try:
             stop_atr, tp_atr = _atr_multiples(args)
+            session = _session_from_args(args)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -328,14 +392,19 @@ def main(argv: list[str] | None = None) -> int:
                 f"{trend_tf} EMA200 trend. Product default remains 1h/4h. "
                 "Order-book filters skipped (no historical L2)."
             )
-        elif entry_tf in {"2h", "4h"} or args.reward_risk is not None or (
+        elif profile_name != "default" or session is not None or entry_tf in {
+            "2h",
+            "4h",
+        } or args.reward_risk is not None or (
             args.tp_atr is not None and args.tp_atr != TP_ATR_MULT
         ):
             print(
-                f"EXPERIMENT: {entry_tf} entry / {trend_tf} EMA200 / "
+                f"EXPERIMENT: profile={profile_name} / {entry_tf} entry / "
+                f"{trend_tf} EMA200 / "
                 f"stop {stop_atr:g}×ATR / TP {tp_atr:g}×ATR "
-                f"(RR 1:{tp_atr / stop_atr:g}). "
-                "Product default remains 1h/4h with TP=2×ATR. "
+                f"(RR 1:{tp_atr / stop_atr:g})"
+                + (f" / {session.label}." if session else ".")
+                + " Product default remains 1h/4h 24/7 with TP=2×ATR. "
                 "Order-book filters skipped (no historical L2)."
             )
         result = run_backtest(
@@ -347,6 +416,8 @@ def main(argv: list[str] | None = None) -> int:
             trend_timeframe=trend_tf,
             stop_atr_mult=stop_atr,
             tp_atr_mult=tp_atr,
+            session=session,
+            profile=profile_name,
         )
         print(format_report(result))
         return 0
