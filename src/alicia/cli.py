@@ -88,8 +88,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "backtest",
         help="Run the strategy on cached public OHLCV (or --csv / --synthetic)",
     )
-    bt.add_argument("--csv", default=None, help="1h OHLCV CSV (timestamp,open,high,low,close,volume)")
+    bt.add_argument("--csv", default=None, help="OHLCV CSV (timestamp,open,high,low,close,volume)")
     bt.add_argument("--cache-dir", default=None, help="Cache directory (default: data/cache)")
+    bt.add_argument(
+        "--symbol",
+        default=None,
+        help="Spot symbol for cache lookup (default: SYMBOL or BTC/USDT). Use ETH/USDT for the regime-20 ETH run.",
+    )
+    bt.add_argument(
+        "--exchange",
+        default=None,
+        help="Cache venue id (default: EXCHANGE / active pointer)",
+    )
     bt.add_argument(
         "--synthetic",
         action="store_true",
@@ -507,6 +517,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "backtest":
+        if getattr(args, "symbol", None):
+            settings = replace(settings, symbol=args.symbol)
+        if getattr(args, "exchange", None):
+            settings = replace(settings, exchange_id=args.exchange)
         profile_name = _apply_profile(args)
         ohlcv, source = _resolve_ohlcv(args, settings)
         if ohlcv is None:
@@ -619,8 +633,10 @@ def main(argv: list[str] | None = None) -> int:
                 bits.append(f"BE@{breakeven_r:g}R")
             if signal != "rsi":
                 bits.append(f"signal {signal}")
-            if signal == "breakout":
+            if signal in {"breakout", "regime"}:
                 bits.append(f"Donchian {donchian_n}")
+            if signal == "regime":
+                bits.append(f"ADX split {extra.adx_split:g}")
             if trail_atr is not None:
                 bits.append(f"trail {trail_atr:g}×ATR")
             if stop_mode != "atr":

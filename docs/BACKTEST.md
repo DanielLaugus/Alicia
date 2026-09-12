@@ -405,3 +405,77 @@ Enough trades to read: every Donchian / pullback variant **loses in both windows
 
 **Curiosity profiles only — do not promote.** Product default stays 1h/4h RSI. `us-session` remains the least-bad named profile after costs (−0.69%, small n). Breakout is a valid **second signal family** for later research (especially trail or rising-EMA if fees ever drop), but on this ~2y OKX sample with honest costs it is not an upgrade.
 
+## Potential search
+
+Mandate: keep trying until something has **real potential**, defined as **all** of:
+
+1. After **10 bps / 5 bps**, full-sample return **> +5%** on ~2y (or clearly better risk-adjusted than us-session −0.69% with DD ≤ 15%).
+2. Train **and** OOS (split **2025-09-12** UTC) both **≥ 0%** after costs.
+3. Preferably ≥ 20 closed OOS **or** ≥ 40 full-sample; fewer = fragile, keep searching.
+4. No lookahead, no fake L2, no discarding costs. Maker 2–4 bps is a secondary score only.
+
+Product RSI default is unchanged. Primary venue remains OKX public spot.
+
+### Winner (only config that cleared the written bar)
+
+**ETH/USDT · `regime-20` · 4h entry / 12h EMA200 · ADX split 20 · RR 1:2 · 24/7 · 10/5 bps**
+
+When ADX(14) ≥ 20 on the closed 4h bar: Donchian-20 high breakout (price > completed 12h EMA200). When ADX < 20: product RSI bounce (cross up through 40 + volume). Same risk, kill-switch, stop-before-TP.
+
+```bash
+python -m alicia download --exchange okx --symbol ETH/USDT --timeframe 4h --years 2
+python -m alicia backtest --symbol ETH/USDT --profile regime-20
+# or: python -m alicia backtest --csv data/cache/okx_ETHUSDT_4h.csv --profile regime-20
+```
+
+| Window | Trades | WR | Return | Max DD |
+| --- | ---: | ---: | ---: | ---: |
+| Full ~2y (2024-09-12 → 2026-09-12, 4,379 4h bars) | **44** | 40.91% | **+11.47%** | −16.07% |
+| Train to 2025-09-12 | 28 | 42.86% | **+10.88%** | −16.07% |
+| OOS from 2025-09-12 | 16 | 37.50% | **+0.52%** | −15.58% |
+| Zero-cost full | 44 | — | +20.58% (eq 2,411.52) | — |
+
+Meets: (1) +11.47% > +5% at 10/5; (2) train and mid-sample OOS both ≥ 0; (3) 44 full-sample trades; (4) honest costs, no L2 invention.
+
+**Caveats (do not skip):**
+
+- This is **ETH**, not BTC. The same `regime-20` bundle on BTC 4h is **−15.85%** (57 trades). Do not port it blindly.
+- OOS is **thin**: 16 trades, **+0.52%**. Alternate splits are not stable: 2025-06-01 train −3.66% / OOS +15.7%; 2025-12-01 train +20.2% / OOS **−7.27%**. The pre-declared mid split passes; other cuts do not.
+- ADX 20 vs 25 vs 30 was a one-parameter A/B. Split 25 on ETH is +22.7% full but OOS **−3.0%** (fails rule 2). Split 20 is the one that cleared OOS.
+- DD −16% is not pretty. The run also tripped the **−10% monthly kill-switch** twice. Not live-money advice. Curiosity profile only — **do not replace the BTC RSI product default.**
+
+### Agenda log (honest failures)
+
+| Step | What we ran | Outcome |
+| --- | --- | --- |
+| **A BTC regime** | ADX switch / trend-only / range-only on 4h and 2h, ± NY peak | 24/7 regime −5% to −17%. **regime-us** +2.33% / train +1.66% / OOS +0.66% / DD −10.3% — green train+OOS but **n=18, fragile**. Adding slope → +5.92% but n=14. More trades (2h, 1h, split 20) went red. |
+| **B funding** | OKX public `funding-rate-history` (~290 prints, 2026-06-08 → 2026-09-12 only). Binance `fapi` **HTTP 451**. Bybit/Coinglass not used. | **Not a 2y filter.** On the 3-month overlap, funding caps left 0–3 trades. Documented skip for full-sample research — series was not invented. |
+| **C maker 2–4 bps** | Re-score BTC `breakout-trail` and `us-peak-1h` | Trail at **2/2 bps**: +3.16%, train +0.88%, OOS +0.99%, n=47, DD −12.8%. At **10/5 still −6.23%**. us-peak-1h 2/2: +2.39% but train −1.26%. **Potential only with maker fills** — use `--fee-bps 2 --slip-bps 2`. Not a primary-score win. |
+| **D ETH** | Same venue/window, ETH/USDT 1h+4h OKX | Product RSI −28.4%. us-session n=3. **regime-20 is the only bar-clearing config** (above). ETH breakout+slope +8.1% / +5.2% / +2.7% but n=23 (fragile). ETH trail +9.3% fails OOS (−1.5%). |
+| **E long+short** | Mirrored Donchian/RSI/regime below EMA200. Futures-like; **not spot-executable**. | BTC both-side 4h −15% to −21%, DD ~−30%. Short-only −4.6% (OOS +0.46%, train −5%). ETH both-side +1% to +5% with OOS −10% to −14%. No bar clear. |
+| **F vol targeting** | Skip ATR% ≥ 200-bar 90th; optional qty scale to 2% ATR | BTC trail+vol-halt −5.4% (train +4.0%, OOS **−10.3%** — overfit train). us-session+vol-halt **+5.72%** but n=5 (fragile). Did not stabilize a 40-trade BTC book. |
+
+### BTC leaderboard (10/5 unless noted)
+
+| Variant | n | Return | DD | Train | OOS | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| us-session + vol-halt | 5 | +5.72% | −4.2% | +4.8% | +0.87% | fragile |
+| regime-us + slope | 14 | +5.92% | −5.0% | +1.66% | +4.19% | fragile |
+| **regime-us** | 18 | +2.33% | −10.3% | +1.66% | +0.66% | closest BTC, still <40 |
+| trail 2/2 maker | 47 | +3.16% | −12.8% | +0.88% | +0.99% | not 10/5 |
+| us-session RSI | 8+1 | −0.69% | −6.6% | −1.55% | +0.87% | prior curiosity |
+| trail 10/5 | 47 | −6.23% | −19.5% | −5.04% | −2.66% | zc +6.7% |
+| product RSI 1h | 92 | −25.08% | −28.9% | −20.2% | −6.17% | default |
+
+### How to run the search flags
+
+```bash
+python -m alicia backtest --profile regime              # ADX 25 switch, 4h
+python -m alicia backtest --profile regime-20           # ADX 20 (ETH winner; BTC loses)
+python -m alicia backtest --profile regime-us
+python -m alicia backtest --profile trend-adx           # breakout only if ADX>=25 and +DI>-DI
+python -m alicia backtest --profile range-adx           # RSI only if ADX<=20
+python -m alicia backtest --profile breakout-trail --fee-bps 2 --slip-bps 2   # maker check
+python -m alicia backtest --profile breakout --side both   # futures-like research
+```
+

@@ -86,6 +86,10 @@ python -m alicia backtest --profile us-peak-best    # 1h peak + EMA50 + chop
 python -m alicia backtest --profile breakout        # 4h/12h 24/7, Donchian 20 + EMA200, RR 1:2
 python -m alicia backtest --profile breakout-us     # same + NY peak [09:00,13:00)
 python -m alicia backtest --signal breakout --timeframe 4h --reward-risk 2
+
+# Potential-search (not the BTC product default). ETH regime-20 cleared the written bar — see docs/BACKTEST.md
+python -m alicia download --exchange okx --symbol ETH/USDT --timeframe 4h --years 2
+python -m alicia backtest --symbol ETH/USDT --profile regime-20
 ```
 
 A recorded OHLCV run is in [`docs/BACKTEST.md`](docs/BACKTEST.md). That run **skips order-book filters** — see below.

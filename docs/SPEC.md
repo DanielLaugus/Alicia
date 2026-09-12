@@ -139,6 +139,8 @@ Do not promote this profile to the product default unless a later sample is clea
 
 See `docs/BACKTEST.md` for the comparison vs product RSI and `us-session`. Do not silently replace the RSI default.
 
+**Regime switch (curiosity):** `--signal regime` / `--profile regime` / `regime-20`. If ADX(14) on the entry bar is ≥ `adx_split` (25, or 20 for `regime-20`), use the Donchian breakout; otherwise use the product RSI bounce. Optional `--adx-min` / `--adx-max` / `--di-align` / `--vol-halt` / `--side short|both`. Shorts are **futures-like research**, not spot-executable. The only bundle that met the written potential bar on ~2y OKX was **ETH/USDT `regime-20`** (see `docs/BACKTEST.md` § Potential search). BTC product default stays RSI.
+
 ## Execution assumptions (backtest)
 
 - Fees: `FEE_BPS` on each side (entry and exit), applied to fill notional.

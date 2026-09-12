@@ -137,6 +137,8 @@ def test_product_default_profile_stays_rsi_long():
     assert PROFILES["default"].signal == "rsi"
     assert PROFILES["default"].side == "long"
     assert PROFILES["regime"].signal == "regime"
+    assert PROFILES["regime-20"].extra.adx_split == 20.0
+    assert PROFILES["regime-20"].entry_timeframe == "4h"
 
 
 def test_attach_adds_adx_columns():

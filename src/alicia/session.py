@@ -260,6 +260,15 @@ PROFILE_REGIME_US = StrategyProfile(
     signal="regime",
     extra=ExtraFilters(adx_split=25.0),
 )
+PROFILE_REGIME_20 = StrategyProfile(
+    name="regime-20",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=2.0,
+    signal="regime",
+    extra=ExtraFilters(adx_split=20.0),
+)
 PROFILE_REGIME_2H = StrategyProfile(
     name="regime-2h",
     entry_timeframe="2h",
@@ -321,6 +330,7 @@ PROFILES = {
     "breakout-2h": PROFILE_BREAKOUT_2H,
     "pullback": PROFILE_PULLBACK,
     "regime": PROFILE_REGIME,
+    "regime-20": PROFILE_REGIME_20,
     "regime-us": PROFILE_REGIME_US,
     "regime-2h": PROFILE_REGIME_2H,
     "trend-adx": PROFILE_TREND_ADX,
