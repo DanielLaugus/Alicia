@@ -163,4 +163,6 @@ def test_cli_backtest_synthetic(capsys):
     captured = capsys.readouterr()
     assert code == 0
     assert "source:        synthetic" in captured.out
+    assert "entry 1h / trend EMA200 4h" in captured.out
     assert "win rate" in captured.out
+    assert "EXPERIMENT" not in captured.out

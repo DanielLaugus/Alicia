@@ -44,6 +44,27 @@ def test_ema200_4h_unavailable_until_200_completed_4h_bars():
     assert ready["ema200_4h"].notna().any()
 
 
+def test_1m_experiment_uses_completed_1h_ema200():
+    idx = pd.date_range("2024-01-01", periods=200 * 60 + 90, freq="1min", tz="UTC")
+    close = pd.Series(range(len(idx)), index=idx, dtype="float64") + 40_000.0
+    df = pd.DataFrame(
+        {
+            "open": close,
+            "high": close + 1,
+            "low": close - 1,
+            "close": close,
+            "volume": 1.0,
+        },
+        index=idx,
+    )
+    a = attach_indicators(df, trend_timeframe="1h")
+    assert a["ema200_4h"].notna().any()
+    b_src = df.copy()
+    b_src.iloc[-1, b_src.columns.get_loc("close")] = float(b_src.iloc[-1]["close"]) * 2
+    b = attach_indicators(b_src, trend_timeframe="1h")
+    pd.testing.assert_series_equal(a["ema200_4h"], b["ema200_4h"], check_names=False)
+
+
 def test_attach_indicators_adds_expected_columns():
     frame = attach_indicators(generate_sample_ohlcv(n_1h=900, seed=2))
     for col in ("rsi_14", "rsi_14_prev", "atr_14", "volume_ma20", "ema200_4h"):

@@ -67,6 +67,13 @@ python -m alicia backtest --csv path/to/btcusdt_1h.csv
 python -m alicia backtest --synthetic                  # built-in demo series
 ```
 
+Curiosity only — **not** the product default — 1m entry with 1h EMA200 (see `docs/BACKTEST.md`):
+
+```bash
+python -m alicia download --timeframe 1m --days 60
+python -m alicia backtest --timeframe 1m
+```
+
 A recorded OHLCV run is in [`docs/BACKTEST.md`](docs/BACKTEST.md). That run **skips order-book filters** — see below.
 
 **CI / unit tests never hit the network.** Live `download` + `backtest` is a manual/integration step.

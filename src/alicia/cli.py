@@ -17,6 +17,7 @@ from alicia.data import (
     download_ohlcv_with_fallback,
     load_ohlcv,
     read_cache,
+    resolve_cached,
     resolve_cached_1h,
 )
 from alicia.orderbook import (
@@ -43,8 +44,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "download",
         help="Fetch public BTC/USDT 1h history via ccxt (no API key) and cache it locally",
     )
-    dl.add_argument("--years", type=float, default=2.0, help="How many years back (default: 2)")
-    dl.add_argument("--since", default=None, help="UTC start date YYYY-MM-DD (overrides --years)")
+    dl.add_argument("--years", type=float, default=2.0, help="How many years back (default: 2; ignored for 1m unless --since)")
+    dl.add_argument("--days", type=float, default=None, help="Lookback in days (1m experiment default: 60)")
+    dl.add_argument(
+        "--timeframe",
+        default="1h",
+        help="Candle timeframe (default: 1h). Use 1m only for the curiosity experiment.",
+    )
+    dl.add_argument("--since", default=None, help="UTC start date YYYY-MM-DD (overrides --years/--days)")
     dl.add_argument("--until", default=None, help="UTC end date YYYY-MM-DD (default: now)")
     dl.add_argument("--exchange", default=None, help="ccxt id (default: EXCHANGE or binance)")
     dl.add_argument("--symbol", default=None, help="Spot symbol (default: SYMBOL or BTC/USDT)")
@@ -75,6 +82,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-cost-compare",
         action="store_true",
         help="Skip the extra zero-fee/zero-slippage run used for cost impact",
+    )
+    bt.add_argument(
+        "--timeframe",
+        default="1h",
+        help="Entry timeframe (default: 1h product). 1m is a curiosity experiment only.",
+    )
+    bt.add_argument(
+        "--trend-timeframe",
+        default=None,
+        help="Trend EMA200 TF (default: 4h for 1h entry, 1h for 1m experiment)",
     )
 
     dry = sub.add_parser(
@@ -145,6 +162,12 @@ def _missing_cache_message(path: Path) -> str:
     )
 
 
+def _trend_tf(entry_tf: str, override: str | None) -> str:
+    if override:
+        return override
+    return {"1m": "1h", "1h": "4h"}.get(entry_tf, "4h")
+
+
 def _resolve_ohlcv(args, settings):
     if getattr(args, "csv", None):
         frame = load_ohlcv(args.csv)
@@ -152,9 +175,10 @@ def _resolve_ohlcv(args, settings):
     if getattr(args, "synthetic", False):
         return load_ohlcv(synthetic=True), "synthetic"
     directory = cache_dir(getattr(args, "cache_dir", None))
-    path = resolve_cached_1h(settings.exchange_id, settings.symbol, directory)
+    timeframe = getattr(args, "timeframe", "1h")
+    path = resolve_cached(settings.exchange_id, settings.symbol, timeframe, directory)
     if path is None:
-        preferred = cache_csv_path(settings.exchange_id, settings.symbol, "1h", directory)
+        preferred = cache_csv_path(settings.exchange_id, settings.symbol, timeframe, directory)
         print(_missing_cache_message(preferred), file=sys.stderr)
         return None, None
     return read_cache(path), f"cache:{path}"
@@ -173,10 +197,19 @@ def main(argv: list[str] | None = None) -> int:
         exchange = args.exchange or settings.exchange_id
         symbol = args.symbol or settings.symbol
         directory = cache_dir(args.cache_dir)
+        timeframe = args.timeframe
+        days = args.days
+        if timeframe == "1m" and args.since is None and days is None:
+            days = 60.0
         print(
-            f"Downloading public {symbol} 1h from {exchange} "
+            f"Downloading public {symbol} {timeframe} from {exchange} "
             f"(no API key; fallbacks if geo-blocked) → {directory}/ ..."
         )
+        if timeframe == "1m":
+            print(
+                "NOTE: 1m download is a curiosity experiment. "
+                "It does not change the default 1h cache pointer."
+            )
         def _progress(rows: int, last_ms: int) -> None:
             last = pd.Timestamp(last_ms, unit="ms", tz="UTC")
             print(f"  … {rows} bars through {last}")
@@ -186,7 +219,9 @@ def main(argv: list[str] | None = None) -> int:
                 frame = download_ohlcv(
                     exchange_id=exchange,
                     symbol=symbol,
+                    timeframe=timeframe,
                     years=args.years,
+                    days=days,
                     since=args.since,
                     until=args.until,
                     directory=directory,
@@ -198,7 +233,9 @@ def main(argv: list[str] | None = None) -> int:
                 frame, used = download_ohlcv_with_fallback(
                     exchange_id=exchange,
                     symbol=symbol,
+                    timeframe=timeframe,
                     years=args.years,
+                    days=days,
                     since=args.since,
                     until=args.until,
                     directory=directory,
@@ -211,24 +248,39 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Download failed: {exc}", file=sys.stderr)
             return 1
         exchange = used
-        path = cache_csv_path(exchange, symbol, "1h", directory)
-        h4_path = cache_csv_path(exchange, symbol, "4h", directory)
-        print(f"Cached {len(frame)} 1h bars: {frame.index[0]} → {frame.index[-1]}")
-        print(f"  1h CSV: {path}")
-        if h4_path.exists():
-            print(f"  4h CSV (resampled from 1h, for inspection): {h4_path}")
-        print("Backtest with: python -m alicia backtest")
+        path = cache_csv_path(exchange, symbol, timeframe, directory)
+        print(f"Cached {len(frame)} {timeframe} bars: {frame.index[0]} → {frame.index[-1]}")
+        print(f"  CSV: {path}")
+        if timeframe == "1h":
+            h4_path = cache_csv_path(exchange, symbol, "4h", directory)
+            if h4_path.exists():
+                print(f"  4h CSV (resampled from 1h, for inspection): {h4_path}")
+            print("Backtest with: python -m alicia backtest")
+        elif timeframe == "1m":
+            print(
+                "Experiment backtest: python -m alicia backtest --timeframe 1m"
+            )
         return 0
 
     if args.command == "backtest":
         ohlcv, source = _resolve_ohlcv(args, settings)
         if ohlcv is None:
             return 2
+        entry_tf = args.timeframe
+        trend_tf = _trend_tf(entry_tf, args.trend_timeframe)
+        if entry_tf == "1m":
+            print(
+                "EXPERIMENT: 1m entry / "
+                f"{trend_tf} EMA200 trend. Product default remains 1h/4h. "
+                "Order-book filters skipped (no historical L2)."
+            )
         result = run_backtest(
             ohlcv,
             settings,
             source=source,
             compare_zero_cost=not args.no_cost_compare,
+            entry_timeframe=entry_tf,
+            trend_timeframe=trend_tf,
         )
         print(format_report(result))
         return 0

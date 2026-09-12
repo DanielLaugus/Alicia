@@ -184,6 +184,43 @@ def test_short_recent_cache_does_not_cover_two_years(tmp_path):
     assert not history_covers_request(short, years=2.0, since="2024-01-01")
 
 
+def test_1m_download_does_not_overwrite_1h_active_pointer(tmp_path):
+    rows_1h = _catalog(24, start="2024-01-01")
+    fake_1h = FakePublicExchange(rows_1h, page=50)
+    until_1h = str(pd.Timestamp(rows_1h[-1][0] + 3_600_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since="2024-01-01",
+        until=until_1h,
+        directory=tmp_path,
+        force=True,
+        fetch=fake_1h,
+        derive_4h=False,
+    )
+    pointer = (tmp_path / "active.json").read_text(encoding="utf-8")
+    rows_1m = [
+        [1_704_067_200_000 + i * 60_000, 1, 2, 0.5, 1.5, 1]
+        for i in range(30)
+    ]
+    fake_1m = FakePublicExchange(rows_1m, page=50)
+    until_1m = str(pd.Timestamp(rows_1m[-1][0] + 60_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        timeframe="1m",
+        since="2024-01-01",
+        until=until_1m,
+        directory=tmp_path,
+        force=True,
+        fetch=fake_1m,
+        derive_4h=False,
+    )
+    assert (tmp_path / "active.json").read_text(encoding="utf-8") == pointer
+    assert cache_csv_path("okx", "BTC/USDT", "1m", tmp_path).exists()
+
+
 def test_resolve_cached_1h_uses_active_pointer(tmp_path):
     rows = _catalog(24, start="2024-01-01")
     fake = FakePublicExchange(rows, page=50)

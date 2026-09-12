@@ -42,6 +42,8 @@ class BacktestResult:
     halt_events: list[str] = field(default_factory=list)
     source: str = "unknown"
     zero_cost_end_equity: float | None = None
+    entry_timeframe: str = "1h"
+    trend_timeframe: str = "4h"
 
     @property
     def closed_trades(self) -> list[Trade]:
@@ -64,6 +66,8 @@ class BacktestResult:
             impact = self.zero_cost_end_equity - self.end_equity
         return {
             "source": self.source,
+            "entry_timeframe": self.entry_timeframe,
+            "trend_timeframe": self.trend_timeframe,
             "bars": int(len(self.equity_curve)) if self.equity_curve is not None else 0,
             "first_bar": first,
             "last_bar": last,
@@ -123,17 +127,24 @@ def run_backtest(
     *,
     source: str = "unknown",
     compare_zero_cost: bool = False,
+    entry_timeframe: str = "1h",
+    trend_timeframe: str = "4h",
 ) -> BacktestResult:
     settings = settings or load_settings()
     calendar = calendar if calendar is not None else calendar_from_settings(settings)
-    frame = attach_indicators(ohlcv_1h)
+    frame = attach_indicators(ohlcv_1h, trend_timeframe=trend_timeframe)
 
     cash = float(settings.capital_eur)  # USDT treated 1:1 with EUR by default
     qty = 0.0
     position: Trade | None = None
     pending_entry: dict | None = None
     dd = MonthlyDrawdownGuard(threshold=settings.monthly_dd_halt)
-    result = BacktestResult(start_capital=cash, source=source)
+    result = BacktestResult(
+        start_capital=cash,
+        source=source,
+        entry_timeframe=entry_timeframe,
+        trend_timeframe=trend_timeframe,
+    )
     equity_points: list[tuple[pd.Timestamp, float]] = []
 
     fee = settings.fee_rate
@@ -269,6 +280,8 @@ def run_backtest(
             calendar,
             source=source,
             compare_zero_cost=False,
+            entry_timeframe=entry_timeframe,
+            trend_timeframe=trend_timeframe,
         )
         result.zero_cost_end_equity = baseline.end_equity
     return result
@@ -279,6 +292,7 @@ def format_report(result: BacktestResult) -> str:
     lines = [
         "Alicia backtest — BTC/USDT spot, LONG only",
         f"  source:        {s['source']}",
+        f"  timeframes:    entry {s['entry_timeframe']} / trend EMA200 {s['trend_timeframe']}",
         f"  bars:          {s['bars']}  ({s['first_bar']} → {s['last_bar']})",
         f"  trades:        {s['trades']}  (open at end: {s['open_at_end']})",
         f"  wins/losses:   {s['wins']}/{s['losses']}  (win rate {s['win_rate_pct']:.2f}%)",

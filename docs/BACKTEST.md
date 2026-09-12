@@ -59,3 +59,23 @@ Last fills (newest):
 - 2026-09-08 15:00 · TP · pnl +11.18
 
 This window lost money after costs. The zero-cost run is still slightly negative, so the edge is not rescued by turning fees off — costs made a large existing drag worse. Numbers are a historical simulation, not a live or paper trading record.
+
+## 1m experiment (curiosity only)
+
+**Not the product default.** Default CLI remains 1h entry / 4h EMA200.
+
+```bash
+python -m alicia download --timeframe 1m --days 60
+python -m alicia backtest --timeframe 1m
+```
+
+| Item | Value |
+| --- | --- |
+| Status | Pending — filled after the experimental run |
+| Entry TF | 1m (same RSI 14 / volume SMA20 / ATR 14 rules) |
+| Trend TF | **1h EMA200** (completed hours only). 1m→1h is a 60× step vs the product 1h→4h (4×); this is a slower trend filter than a proportional 4m EMA. Warmup ≈ 200 hours (~8.3 days). |
+| Window | Last **60 days** of public 1m bars (2 years of 1m is too large for this experiment) |
+| Order book | **Skipped** — no historical L2 |
+| Fees / slippage / sizing | Same as the 1h product backtest |
+
+Do not promote 1m to the main strategy from this section.

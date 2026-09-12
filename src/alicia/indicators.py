@@ -58,9 +58,28 @@ def sma(values: pd.Series, period: int) -> pd.Series:
     return values.astype("float64").rolling(window=period, min_periods=period).mean()
 
 
-def resample_ohlcv_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
-    """UTC 4h candles from 1h OHLCV. Index must be timezone-aware UTC or naive UTC."""
-    frame = df_1h.copy()
+PANDAS_RULES = {
+    "1m": "1min",
+    "5m": "5min",
+    "15m": "15min",
+    "1h": "1h",
+    "4h": "4h",
+}
+
+TREND_COMPLETE = {
+    "1m": pd.Timedelta(minutes=1),
+    "5m": pd.Timedelta(minutes=5),
+    "15m": pd.Timedelta(minutes=15),
+    "1h": pd.Timedelta(hours=1),
+    "4h": pd.Timedelta(hours=4),
+}
+
+
+def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """UTC OHLCV resample. Index must be timezone-aware UTC or naive UTC."""
+    if timeframe not in PANDAS_RULES:
+        raise ValueError(f"Unsupported resample timeframe: {timeframe}")
+    frame = df.copy()
     if frame.index.tz is None:
         frame.index = frame.index.tz_localize("UTC")
     else:
@@ -72,21 +91,32 @@ def resample_ohlcv_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
         "close": "last",
         "volume": "sum",
     }
-    out = frame.resample("4h", label="left", closed="left").agg(agg).dropna(subset=["close"])
-    return out
+    rule = PANDAS_RULES[timeframe]
+    return frame.resample(rule, label="left", closed="left").agg(agg).dropna(subset=["close"])
 
 
-def attach_indicators(df_1h: pd.DataFrame) -> pd.DataFrame:
-    """Add 1h RSI/ATR/volume MA and completed-4h EMA200 (forward-filled, no lookahead)."""
-    if df_1h.empty:
+def resample_ohlcv_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
+    """UTC 4h candles from 1h OHLCV (product-default trend TF)."""
+    return resample_ohlcv(df_1h, "4h")
+
+
+def attach_indicators(df: pd.DataFrame, *, trend_timeframe: str = "4h") -> pd.DataFrame:
+    """Add RSI/ATR/volume MA on the bar TF and completed-trend EMA200 (no lookahead).
+
+    Product default is 1h bars + 4h EMA200. The 1m experiment uses 1m bars + 1h EMA200.
+    The column name ``ema200_4h`` is kept as the trend-EMA series for callers.
+    """
+    if df.empty:
         raise ValueError("OHLCV frame is empty")
 
     required = {"open", "high", "low", "close", "volume"}
-    missing = required - set(df_1h.columns)
+    missing = required - set(df.columns)
     if missing:
         raise ValueError(f"OHLCV missing columns: {sorted(missing)}")
+    if trend_timeframe not in TREND_COMPLETE:
+        raise ValueError(f"Unsupported trend timeframe: {trend_timeframe}")
 
-    frame = df_1h.copy().sort_index()
+    frame = df.copy().sort_index()
     if frame.index.tz is None:
         frame.index = frame.index.tz_localize("UTC")
     else:
@@ -97,11 +127,11 @@ def attach_indicators(df_1h: pd.DataFrame) -> pd.DataFrame:
     frame["atr_14"] = atr(frame["high"], frame["low"], frame["close"], 14)
     frame["volume_ma20"] = sma(frame["volume"], 20)
 
-    h4 = resample_ohlcv_4h(frame[["open", "high", "low", "close", "volume"]])
-    h4["ema200_4h"] = ema(h4["close"], 200)
-    # A 4h bar that starts at T is complete at T+4h. Only then may 1h bars see it.
-    h4_complete = h4.copy()
-    h4_complete.index = h4_complete.index + pd.Timedelta(hours=4)
-    aligned = h4_complete[["ema200_4h"]].reindex(frame.index, method="ffill")
+    trend = resample_ohlcv(frame[["open", "high", "low", "close", "volume"]], trend_timeframe)
+    trend["ema200_4h"] = ema(trend["close"], 200)
+    # A trend bar that starts at T is complete at T+len; only then may entry bars see it.
+    complete = trend.copy()
+    complete.index = complete.index + TREND_COMPLETE[trend_timeframe]
+    aligned = complete[["ema200_4h"]].reindex(frame.index, method="ffill")
     frame["ema200_4h"] = aligned["ema200_4h"]
     return frame

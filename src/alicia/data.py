@@ -90,27 +90,38 @@ def write_active_pointer(
     )
 
 
+def resolve_cached(
+    exchange_id: str,
+    symbol: str,
+    timeframe: str = "1h",
+    directory: str | Path | None = None,
+) -> Path | None:
+    """Preferred cache for this timeframe. The active.json pointer is 1h-only."""
+    directory = cache_dir(directory)
+    preferred = cache_csv_path(exchange_id, symbol, timeframe, directory)
+    if preferred.exists():
+        return preferred
+    if timeframe == "1h":
+        pointer = active_pointer_path(directory)
+        if pointer.exists():
+            payload = json.loads(pointer.read_text(encoding="utf-8"))
+            if payload.get("timeframe", "1h") == "1h":
+                candidate = Path(payload.get("csv", ""))
+                if candidate.exists():
+                    return candidate
+    safe = symbol.replace("/", "").replace(":", "")
+    matches = sorted(directory.glob(f"*_{safe}_{timeframe}.csv"))
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def resolve_cached_1h(
     exchange_id: str,
     symbol: str,
     directory: str | Path | None = None,
 ) -> Path | None:
-    """Preferred cache, then the last successful download pointer, then a unique match."""
-    directory = cache_dir(directory)
-    preferred = cache_csv_path(exchange_id, symbol, "1h", directory)
-    if preferred.exists():
-        return preferred
-    pointer = active_pointer_path(directory)
-    if pointer.exists():
-        payload = json.loads(pointer.read_text(encoding="utf-8"))
-        candidate = Path(payload.get("csv", ""))
-        if candidate.exists():
-            return candidate
-    safe = symbol.replace("/", "").replace(":", "")
-    matches = sorted(directory.glob(f"*_{safe}_1h.csv"))
-    if len(matches) == 1:
-        return matches[0]
-    return None
+    return resolve_cached(exchange_id, symbol, "1h", directory)
 
 
 def bars_to_frame(raw: Iterable[list]) -> pd.DataFrame:
@@ -162,9 +173,17 @@ def drop_incomplete_last_bar(
     return frame
 
 
-def resolve_since_ms(*, years: float = 2.0, since: str | None = None) -> int:
+def resolve_since_ms(
+    *,
+    years: float = 2.0,
+    days: float | None = None,
+    since: str | None = None,
+) -> int:
     if since:
         return int(pd.Timestamp(since, tz="UTC").timestamp() * 1000)
+    if days is not None:
+        start = datetime.now(timezone.utc) - timedelta(days=float(days))
+        return int(start.timestamp() * 1000)
     start = datetime.now(timezone.utc) - timedelta(days=int(years * 365))
     return int(start.timestamp() * 1000)
 
@@ -294,6 +313,7 @@ def download_ohlcv(
     symbol: str = "BTC/USDT",
     timeframe: str = DEFAULT_TIMEFRAME,
     years: float = 2.0,
+    days: float | None = None,
     since: str | None = None,
     until: str | None = None,
     directory: str | Path | None = None,
@@ -301,6 +321,7 @@ def download_ohlcv(
     fetch: FetchFn | None = None,
     derive_4h: bool = True,
     on_page: Callable[[int, int], None] | None = None,
+    update_active: bool | None = None,
 ) -> pd.DataFrame:
     """Download public spot OHLCV and persist under the cache directory.
 
@@ -313,7 +334,7 @@ def download_ohlcv(
         last = existing.index[-1]
         since_ms = int(last.timestamp() * 1000) + TIMEFRAME_MS[timeframe]
     else:
-        since_ms = resolve_since_ms(years=years, since=since)
+        since_ms = resolve_since_ms(years=years, days=days, since=since)
     until_ms = resolve_until_ms(until)
 
     if existing is not None and not existing.empty and since_ms >= until_ms:
@@ -340,13 +361,15 @@ def download_ohlcv(
         h4 = resample_ohlcv_4h(combined)
         h4_path = cache_csv_path(exchange_id, symbol, "4h", directory)
         write_cache(h4, h4_path, _meta_for(h4, exchange_id, symbol, "4h"))
-    write_active_pointer(
-        exchange_id=exchange_id,
-        symbol=symbol,
-        timeframe=timeframe,
-        csv_path=path,
-        directory=directory,
-    )
+    # Never let an experimental 1m download hijack the product-default 1h pointer.
+    if update_active if update_active is not None else timeframe == "1h":
+        write_active_pointer(
+            exchange_id=exchange_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            csv_path=path,
+            directory=directory,
+        )
     return combined
 
 
@@ -356,16 +379,18 @@ def history_covers_request(
     years: float,
     since: str | None,
     until: str | None = None,
+    days: float | None = None,
 ) -> bool:
     """Reject venues that ignore ``since`` or stop after one short page."""
     if frame.empty:
         return False
     end = pd.Timestamp(until, tz="UTC") if until else pd.Timestamp.now(tz="UTC")
-    start = (
-        pd.Timestamp(since, tz="UTC")
-        if since
-        else end - pd.Timedelta(days=int(years * 365))
-    )
+    if since:
+        start = pd.Timestamp(since, tz="UTC")
+    elif days is not None:
+        start = end - pd.Timedelta(days=float(days))
+    else:
+        start = end - pd.Timedelta(days=int(years * 365))
     first_gap = frame.index[0] - start
     last_gap = end - frame.index[-1]
     return first_gap <= pd.Timedelta(days=14) and last_gap <= pd.Timedelta(days=7)
@@ -376,8 +401,10 @@ def download_ohlcv_with_fallback(
     exchange_id: str = "binance",
     symbol: str = "BTC/USDT",
     years: float = 2.0,
+    days: float | None = None,
     since: str | None = None,
     until: str | None = None,
+    timeframe: str = DEFAULT_TIMEFRAME,
     directory: str | Path | None = None,
     force: bool = False,
     fallbacks: tuple[str, ...] | None = None,
@@ -398,7 +425,9 @@ def download_ohlcv_with_fallback(
             frame = download_ohlcv(
                 exchange_id=name,
                 symbol=symbol,
+                timeframe=timeframe,
                 years=years,
+                days=days,
                 since=since,
                 until=until,
                 directory=directory,
@@ -410,7 +439,9 @@ def download_ohlcv_with_fallback(
                 on_skip(name, str(exc))
             errors.append(f"{name}: {exc}")
             continue
-        if not history_covers_request(frame, years=years, since=since, until=until):
+        if not history_covers_request(
+            frame, years=years, since=since, until=until, days=days
+        ):
             msg = (
                 f"only {len(frame)} bars "
                 f"({frame.index[0]} → {frame.index[-1]}); venue likely ignores since"
