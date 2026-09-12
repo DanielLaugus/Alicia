@@ -71,11 +71,33 @@ python -m alicia backtest --timeframe 1m
 
 | Item | Value |
 | --- | --- |
-| Status | Pending — filled after the experimental run |
-| Entry TF | 1m (same RSI 14 / volume SMA20 / ATR 14 rules) |
-| Trend TF | **1h EMA200** (completed hours only). 1m→1h is a 60× step vs the product 1h→4h (4×); this is a slower trend filter than a proportional 4m EMA. Warmup ≈ 200 hours (~8.3 days). |
-| Window | Last **60 days** of public 1m bars (2 years of 1m is too large for this experiment) |
+| Run at | 2026-09-12 17:10 UTC |
+| Venue | OKX public spot `BTC/USDT` 1m (Binance 451; 1h EMA resampled from 1m) |
+| Entry TF | **1m** — same RSI(14), volume SMA20, ATR(14) rules |
+| Trend TF | **1h EMA200** on completed hours only. 1m→1h is a 60× step vs product 1h→4h (4×); slower than a proportional 4m EMA. Warmup ≈ 200 hours (~8.3 days). |
+| Window | Last **60 days**: 86,400 bars · 2026-07-14 17:11 UTC → 2026-09-12 17:10 UTC |
+| Cache | `data/cache/okx_BTCUSDT_1m.csv` (does **not** replace the 1h active pointer) |
 | Order book | **Skipped** — no historical L2 |
-| Fees / slippage / sizing | Same as the 1h product backtest |
+| Fees / slippage / sizing | Same as the 1h product run (10 bps / 5 bps / 2% risk / €2,000) |
 
-Do not promote 1m to the main strategy from this section.
+### 1m results (fees + slippage included)
+
+| Metric | 1m experiment | Product 1h/4h (2y) |
+| --- | --- | --- |
+| Trades | **109** (0 open) | 92 |
+| Wins / losses | **0 / 109** | 38 / 54 |
+| Win rate | **0.00%** | 41.30% |
+| Equity | 2,000.00 → **1,450.86** | 2,000.00 → 1,498.36 |
+| Return | **−27.46%** | −25.08% |
+| Max drawdown | **−27.46%** | −28.92% |
+| Closed PnL | −549.14 USDT | −501.64 USDT |
+| Fees / slippage | 373.42 / 186.71 USDT | 316.00 / 158.00 USDT |
+| Cost impact | 603.25 USDT (zero-cost equity 2,054.11) | 419.57 USDT |
+
+Kill-switch tripped on monthly −10% drawdown (several UTC months). Every closed 1m trade hit the **stop**. On 1m bars, 1.5×ATR stop and 2×ATR target often sit inside the same candle; the engine assumes stop first (conservative, per SPEC). Combined with fees on 109 tiny round-trips, the path is worse than the 1h/4h −25% result.
+
+Do not promote 1m to the main strategy from this section. Default remains:
+
+```bash
+python -m alicia backtest
+```
