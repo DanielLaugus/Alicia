@@ -277,3 +277,56 @@ Still **not profitable after fees** (−0.69% full sample). Moving from a guesse
 python -m alicia backtest
 ```
 
+## Pattern review & proposals
+
+Same ~2y OKX window, fees 10 bps / slip 5 bps. Product default is unchanged. New CLI: `--profile us-peak-1h` / `us-peak-best` / `us-peak-all`, plus `--ema-slope --ema50 --chop-filter --rsi-from 30 --breakeven-r 1`.
+
+### What the closed trades show
+
+- **Product 1h/4h (92 trades):** 38 TP / 54 stop. Avg win +16.71 vs avg loss −21.05. Expectancy **−5.45 USDT/trade**. Payoff 0.79 — costs flip the 1.33 RR. Zero-cost equity 1,917.93 is still negative (−4.1%). Losers slightly more Tue/Thu/Fri NY. RSI crosses are **shallow** (prev RSI ~36); only 4 from <30 (25% WR). Almost all entries are **below EMA50** (bounce into EMA200). Rising EMA200 is rare (16/92) and not a win filter. ATR% terciles are flat (~37–45% WR).
+- **2h / 4h 24/7 RR 1:2:** Better payoff (~1.5–1.6) but WR ~32%. Still negative after costs; zero-cost still slightly negative.
+- **us-session 4h (8 closed + 1 open):** Expectancy −0.26. All signals are the **12:00 UTC 4h bar** (07:00–08:00 ET open / 11:00–12:00 ET close). Small sample. Aug 2025 has a 3-stop cluster. RSI-from-30 and EMA50 would have blocked most of these anyway.
+- **Fee drag:** Every 1h-in-peak variant that looks decent zero-cost (us-peak-1h RR 1:2 zc 2,097) **dies after fees** (1,856). Discard those as live candidates (rule F).
+
+### Ranked full-sample A/B (after costs)
+
+| Rank | Variant | Trades | WR | Return | Max DD | vs us-session / product |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| — | **us-session 4h NY peak RR 1:2** (current profile) | 8+1 | 37.5% | **−0.69%** | −6.61% | baseline / +24 pp vs product |
+| 1 | us-peak-1h + EMA50 + chop, RR 1:2 (`us-peak-best`) | 8 | 37.5% | −1.48% | −2.89% | worse return, shallower DD |
+| 2 | us-peak-1h + EMA50, RR 1:2 | 8 | 37.5% | −1.48% | −2.89% | chop did not change this set |
+| 3 | us-peak-1h + slope AND EMA50 | 2 | 50% | −1.05% | −2.68% | n=2 — not usable |
+| 4 | us-peak-1h + RSI from <30 | 1 | 0% | −0.95% | −0.95% | n=1 — starves |
+| 5 | us-session 4h + chop | 6 | 33% | −1.65% | −7.51% | worse |
+| 6 | us-peak-1h + chop, RR 1:2 | 38 | 36.8% | −4.87% | −8.80% | more trades, still worse |
+| 7 | product 1h + EMA50 | 13 | 38.5% | −4.93% | −6.11% | helps 24/7 1h, not enough |
+| 8 | us-peak-1h RR 1:2 (no extras) | 40 | 35% | −7.21% | −9.61% | zc +4.9% — **fees kill it** |
+| 9 | us-peak-1h product TP | 40 | 40% | −11.83% | −14.42% | 1:2 beat product TP here |
+| 10 | product + chop | 76 | 41% | −21.99% | −25.69% | weak |
+| 11 | **product 1h/4h** | 92 | 41.3% | **−25.08%** | −28.92% | baseline product |
+| 12 | us-peak-1h + BE@1R | 40 | 45% | −19.03% | −21.92% | **discard** (worse zc too) |
+| 13 | product + BE@1R | 95 | 54% | −33.71% | −34.71% | **discard** |
+| 14 | **us-peak-all** (slope+EMA50+chop+RSI30+BE) | **0** | — | 0% | 0% | over-filtered |
+
+### Train / OOS (2025-09-12 split)
+
+| Variant | Train | OOS |
+| --- | --- | --- |
+| us-session 4h | 6 · −1.55% | 2+1 · **+0.87%** |
+| us-peak-1h + EMA50 / best | 6 · **+0.70%** | 2 · **−2.16%** (0% WR) |
+| us-peak-1h + chop | 28 · −5.03% | 10 · +0.17% |
+| product + EMA50 | 9 · −3.08% | 4 · −1.90% |
+
+OOS samples are tiny except chop (10 trades, flat). EMA50 “won” in-sample and **lost** out of sample.
+
+### Recommendation
+
+**None ready to promote.** Keep product 1h/4h as default. Keep `us-session` as the curiosity profile (least-bad after costs, still negative). Do not switch to `us-peak-1h` or `us-peak-all`.
+
+```bash
+python -m alicia backtest --profile us-peak-1h          # 1h in NY peak, 4h EMA200, RR 1:2
+python -m alicia backtest --profile us-peak-best        # + EMA50 + chop
+python -m alicia backtest --profile us-peak-all         # all gates; 0 trades on this sample
+python -m alicia backtest --ema-slope --ema50 --chop-filter --rsi-from 30 --breakeven-r 1
+```
+

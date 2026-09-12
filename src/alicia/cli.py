@@ -241,7 +241,13 @@ def _session_from_args(args) -> SessionWindow | None:
     end_raw = getattr(args, "session_end", None)
     if preset_name:
         base = SESSION_PRESETS[preset_name]
-    elif profile_name in {"us-session", "us-session-1h", "us-peak-1h", "us-peak-all"}:
+    elif profile_name in {
+        "us-session",
+        "us-session-1h",
+        "us-peak-1h",
+        "us-peak-best",
+        "us-peak-all",
+    }:
         base = PROFILES[profile_name].session
     elif start_raw or end_raw:
         base = SESSION_PRESETS["us-primary"]

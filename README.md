@@ -77,8 +77,10 @@ python -m alicia backtest --timeframe 2h --reward-risk 2
 python -m alicia download --timeframe 4h --years 2
 python -m alicia backtest --timeframe 4h --reward-risk 2
 
-# US-session profile (not the product default): 4h/12h, RR 1:2, 09:00–13:00 America/New_York Mon–Fri
-python -m alicia backtest --profile us-session
+# US-session / peak-1h experiments (not the product default)
+python -m alicia backtest --profile us-session      # 4h/12h, NY peak, RR 1:2
+python -m alicia backtest --profile us-peak-1h      # 1h entries inside NY peak, 4h EMA200
+python -m alicia backtest --profile us-peak-best    # 1h peak + EMA50 + chop
 ```
 
 A recorded OHLCV run is in [`docs/BACKTEST.md`](docs/BACKTEST.md). That run **skips order-book filters** — see below.

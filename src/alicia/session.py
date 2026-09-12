@@ -134,7 +134,18 @@ PROFILE_US_PEAK_1H = StrategyProfile(
     stop_atr=1.5,
 )
 
-# All optional gates stacked on us-peak-1h (A/B vs the same with product TP).
+# Filters that individually helped on 1h-in-peak without starving the sample.
+PROFILE_US_PEAK_BEST = StrategyProfile(
+    name="us-peak-best",
+    entry_timeframe="1h",
+    trend_timeframe="4h",
+    session=US_PEAK,
+    reward_risk=2.0,
+    stop_atr=1.5,
+    extra=ExtraFilters(require_ema50=True, chop_filter=True),
+)
+
+# All optional gates stacked (may produce zero trades — see BACKTEST.md).
 PROFILE_US_PEAK_ALL = StrategyProfile(
     name="us-peak-all",
     entry_timeframe="1h",
@@ -156,6 +167,7 @@ PROFILES = {
     "us-session": PROFILE_US_SESSION,
     "us-session-1h": PROFILE_US_PEAK_1H,
     "us-peak-1h": PROFILE_US_PEAK_1H,
+    "us-peak-best": PROFILE_US_PEAK_BEST,
     "us-peak-all": PROFILE_US_PEAK_ALL,
 }
 

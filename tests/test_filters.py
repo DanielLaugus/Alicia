@@ -58,6 +58,15 @@ def test_breakeven_can_raise_stop(settings):
     assert all(t.initial_stop > 0 for t in result.trades)
 
 
+def test_cli_us_peak_all_runs(capsys):
+    code = main(["backtest", "--synthetic", "--profile", "us-peak-all", "--no-cost-compare"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "ema-slope" in captured.out
+    assert "ema50" in captured.out
+    assert "chop-filter" in captured.out
+
+
 def test_cli_us_peak_1h_banner(capsys):
     code = main(["backtest", "--synthetic", "--profile", "us-peak-1h", "--no-cost-compare"])
     captured = capsys.readouterr()
