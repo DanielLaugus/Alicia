@@ -66,6 +66,7 @@ PANDAS_RULES = {
     "2h": "2h",
     "4h": "4h",
     "8h": "8h",
+    "12h": "12h",
     "1d": "1D",
 }
 
@@ -77,6 +78,7 @@ TREND_COMPLETE = {
     "2h": pd.Timedelta(hours=2),
     "4h": pd.Timedelta(hours=4),
     "8h": pd.Timedelta(hours=8),
+    "12h": pd.Timedelta(hours=12),
     "1d": pd.Timedelta(days=1),
 }
 
@@ -109,7 +111,7 @@ def resample_ohlcv_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
 def attach_indicators(df: pd.DataFrame, *, trend_timeframe: str = "4h") -> pd.DataFrame:
     """Add RSI/ATR/volume MA on the bar TF and completed-trend EMA200 (no lookahead).
 
-    Product default is 1h bars + 4h EMA200. Experiments: 1m+1h EMA200, 2h+8h EMA200.
+    Product default is 1h bars + 4h EMA200. Experiments: 1m+1h, 2h+8h, 4h+12h EMA200.
     The column name ``ema200_4h`` is kept as the trend-EMA series for callers.
     """
     if df.empty:

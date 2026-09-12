@@ -26,6 +26,7 @@ TIMEFRAME_MS = {
     "2h": 2 * 60 * 60 * 1000,
     "4h": 4 * 60 * 60 * 1000,
     "8h": 8 * 60 * 60 * 1000,
+    "12h": 12 * 60 * 60 * 1000,
     "1d": 24 * 60 * 60 * 1000,
 }
 
@@ -155,11 +156,11 @@ def resolve_or_resample(
     timeframe: str,
     directory: str | Path | None = None,
 ) -> Path | None:
-    """Find a cache for ``timeframe``, resampling from 1h when needed (2h experiment)."""
+    """Find a cache for ``timeframe``, resampling from 1h when needed (2h / 4h experiments)."""
     path = resolve_cached(exchange_id, symbol, timeframe, directory)
     if path is not None:
         return path
-    if timeframe in {"2h", "8h"}:
+    if timeframe in {"2h", "4h", "8h", "12h"}:
         src = resolve_cached_1h(exchange_id, symbol, directory)
         if src is None:
             return None

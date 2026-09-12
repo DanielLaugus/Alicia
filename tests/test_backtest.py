@@ -174,6 +174,7 @@ def test_trend_tf_defaults_keep_product_and_experiments():
     assert _trend_tf("1h", None) == "4h"
     assert _trend_tf("1m", None) == "1h"
     assert _trend_tf("2h", None) == "8h"
+    assert _trend_tf("4h", None) == "12h"
     assert _trend_tf("2h", "1d") == "1d"
 
 
@@ -207,6 +208,47 @@ def test_2h_rr_experiment_stop_and_tp_are_1_to_2(settings):
         reward = trade.take_profit - trade.entry_price
         assert risk > 0
         assert abs(reward / risk - 2.0) < 1e-9
+
+
+def test_4h_rr_experiment_stop_and_tp_are_1_to_2(settings):
+    hourly = generate_sample_ohlcv(n_1h=5200, seed=13)
+    bars_4h = resample_ohlcv(hourly, "4h")
+    result = run_backtest(
+        bars_4h,
+        settings,
+        entry_timeframe="4h",
+        trend_timeframe="12h",
+        stop_atr_mult=1.5,
+        tp_atr_mult=3.0,
+    )
+    assert result.entry_timeframe == "4h"
+    assert result.trend_timeframe == "12h"
+    assert result.summary()["reward_risk"] == 2.0
+    for trade in result.trades:
+        risk = trade.entry_price - trade.stop
+        reward = trade.take_profit - trade.entry_price
+        assert risk > 0
+        assert abs(reward / risk - 2.0) < 1e-9
+
+
+def test_cli_4h_reward_risk_experiment_banner(capsys):
+    code = main(
+        [
+            "backtest",
+            "--synthetic",
+            "--timeframe",
+            "4h",
+            "--reward-risk",
+            "2",
+            "--no-cost-compare",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "EXPERIMENT" in captured.out
+    assert "4h entry" in captured.out
+    assert "12h EMA200" in captured.out
+    assert "3×ATR" in captured.out or "3.0×ATR" in captured.out
 
 
 def test_cli_2h_reward_risk_experiment_banner(capsys):

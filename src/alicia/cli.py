@@ -50,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dl.add_argument(
         "--timeframe",
         default="1h",
-        help="Candle timeframe (default: 1h). 1m / 2h are curiosity experiments only.",
+        help="Candle timeframe (default: 1h). 1m / 2h / 4h are curiosity experiments only.",
     )
     dl.add_argument("--since", default=None, help="UTC start date YYYY-MM-DD (overrides --years/--days)")
     dl.add_argument("--until", default=None, help="UTC end date YYYY-MM-DD (default: now)")
@@ -87,12 +87,12 @@ def _build_parser() -> argparse.ArgumentParser:
     bt.add_argument(
         "--timeframe",
         default="1h",
-        help="Entry timeframe (default: 1h product). 1m / 2h are curiosity experiments only.",
+        help="Entry timeframe (default: 1h product). 1m / 2h / 4h are curiosity experiments only.",
     )
     bt.add_argument(
         "--trend-timeframe",
         default=None,
-        help="Trend EMA200 TF (default: 4h for 1h, 1h for 1m, 8h for 2h)",
+        help="Trend EMA200 TF (default: 4h for 1h, 1h for 1m, 8h for 2h, 12h for 4h)",
     )
     bt.add_argument(
         "--stop-atr",
@@ -185,7 +185,7 @@ def _missing_cache_message(path: Path) -> str:
 def _trend_tf(entry_tf: str, override: str | None) -> str:
     if override:
         return override
-    return {"1m": "1h", "1h": "4h", "2h": "8h"}.get(entry_tf, "4h")
+    return {"1m": "1h", "1h": "4h", "2h": "8h", "4h": "12h"}.get(entry_tf, "4h")
 
 
 def _atr_multiples(args) -> tuple[float, float]:
@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             f"Downloading public {symbol} {timeframe} from {exchange} "
             f"(no API key; fallbacks if geo-blocked) → {directory}/ ..."
         )
-        if timeframe in {"1m", "2h"}:
+        if timeframe in {"1m", "2h", "4h"}:
             print(
                 f"NOTE: {timeframe} download is a curiosity experiment. "
                 "It does not change the default 1h cache pointer."
@@ -304,6 +304,11 @@ def main(argv: list[str] | None = None) -> int:
                 "Experiment backtest: python -m alicia backtest "
                 "--timeframe 2h --reward-risk 2"
             )
+        elif timeframe == "4h":
+            print(
+                "Experiment backtest: python -m alicia backtest "
+                "--timeframe 4h --reward-risk 2"
+            )
         return 0
 
     if args.command == "backtest":
@@ -323,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{trend_tf} EMA200 trend. Product default remains 1h/4h. "
                 "Order-book filters skipped (no historical L2)."
             )
-        elif entry_tf == "2h" or args.reward_risk is not None or (
+        elif entry_tf in {"2h", "4h"} or args.reward_risk is not None or (
             args.tp_atr is not None and args.tp_atr != TP_ATR_MULT
         ):
             print(
