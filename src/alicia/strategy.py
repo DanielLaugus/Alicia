@@ -10,6 +10,15 @@ TP_ATR_MULT = 2.0  # product default (~1:1.33 RR). Experiments may use 3.0 for 1
 
 
 @dataclass(frozen=True)
+class ExtraFilters:
+    """Optional entry gates. All off = product default."""
+
+    require_ema_slope: bool = False
+    chop_filter: bool = False
+    rsi_from: float | None = None
+
+
+@dataclass(frozen=True)
 class EntryDecision:
     enter: bool
     reason: str
@@ -55,8 +64,13 @@ def evaluate_entry(
     paused: bool = False,
     pause_reason: str | None = None,
     session_ok: bool = True,
+    extra: ExtraFilters | None = None,
+    ema200_prev: float | None = None,
+    atr_pct: float | None = None,
+    atr_pct_q25: float | None = None,
 ) -> EntryDecision:
     """Return whether a new LONG may be opened on this closed bar."""
+    extra = extra or ExtraFilters()
     if paused:
         return EntryDecision(False, pause_reason or "kill-switch / pause is active")
     if has_open_position:
@@ -67,9 +81,24 @@ def evaluate_entry(
         return EntryDecision(False, "EMA200(4h) not ready")
     if not trend_allows_long(price, ema200_4h):
         return EntryDecision(False, "price is not above EMA200(4h)")
+    if extra.require_ema_slope:
+        if ema200_prev is None or not np_finite(ema200_prev):
+            return EntryDecision(False, "EMA200 slope not ready")
+        if ema200_4h <= ema200_prev:
+            return EntryDecision(False, "EMA200 is not sloping up")
+    if extra.chop_filter:
+        if atr_pct is None or atr_pct_q25 is None or not np_finite(atr_pct) or not np_finite(atr_pct_q25):
+            return EntryDecision(False, "ATR% chop filter not ready")
+        if atr_pct < atr_pct_q25:
+            return EntryDecision(False, "ATR% below rolling 25th percentile (chop)")
     if rsi_value is None or prev_rsi is None or not np_finite(rsi_value) or not np_finite(prev_rsi):
         return EntryDecision(False, "RSI(14) 1h not ready")
-    if not rsi_crosses_up_through(prev_rsi, rsi_value):
+    if extra.rsi_from is not None and not (prev_rsi < extra.rsi_from):
+        return EntryDecision(
+            False,
+            f"RSI(14) did not come from below {extra.rsi_from:g} ({prev_rsi:.2f})",
+        )
+    if not rsi_crosses_up_through(prev_rsi, rsi_value, RSI_CROSS_LEVEL):
         return EntryDecision(
             False,
             f"RSI(14) did not cross up through {RSI_CROSS_LEVEL:g} ({prev_rsi:.2f} → {rsi_value:.2f})",

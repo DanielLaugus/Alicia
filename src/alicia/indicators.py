@@ -133,7 +133,10 @@ def attach_indicators(df: pd.DataFrame, *, trend_timeframe: str = "4h") -> pd.Da
     frame["rsi_14"] = rsi(frame["close"], 14)
     frame["rsi_14_prev"] = frame["rsi_14"].shift(1)
     frame["atr_14"] = atr(frame["high"], frame["low"], frame["close"], 14)
+    frame["atr_pct"] = frame["atr_14"] / frame["close"].replace(0.0, np.nan)
+    frame["atr_pct_q25"] = frame["atr_pct"].rolling(window=200, min_periods=50).quantile(0.25)
     frame["volume_ma20"] = sma(frame["volume"], 20)
+    frame["ema50"] = ema(frame["close"], 50)
 
     trend = resample_ohlcv(frame[["open", "high", "low", "close", "volume"]], trend_timeframe)
     trend["ema200_4h"] = ema(trend["close"], 200)
@@ -142,4 +145,5 @@ def attach_indicators(df: pd.DataFrame, *, trend_timeframe: str = "4h") -> pd.Da
     complete.index = complete.index + TREND_COMPLETE[trend_timeframe]
     aligned = complete[["ema200_4h"]].reindex(frame.index, method="ffill")
     frame["ema200_4h"] = aligned["ema200_4h"]
+    frame["ema200_prev"] = frame["ema200_4h"].shift(1)
     return frame

@@ -121,9 +121,19 @@ PROFILE_US_SESSION = StrategyProfile(
     stop_atr=1.5,
 )
 
+PROFILE_US_SESSION_1H = StrategyProfile(
+    name="us-session-1h",
+    entry_timeframe="1h",
+    trend_timeframe="4h",
+    session=US_PEAK,
+    reward_risk=2.0,
+    stop_atr=1.5,
+)
+
 PROFILES = {
     "default": StrategyProfile("default", "1h", "4h", None, None, 1.5),
     "us-session": PROFILE_US_SESSION,
+    "us-session-1h": PROFILE_US_SESSION_1H,
 }
 
 

@@ -26,7 +26,7 @@ from alicia.session import (
     SessionWindow,
     parse_hhmm,
 )
-from alicia.strategy import STOP_ATR_MULT, TP_ATR_MULT
+from alicia.strategy import ExtraFilters, STOP_ATR_MULT, TP_ATR_MULT
 from alicia.orderbook import (
     fetch_public_order_book_with_fallback,
     load_book_json,
@@ -138,6 +138,28 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow weekend session entries (US profile defaults to Mon–Fri UTC)",
     )
+    bt.add_argument(
+        "--ema-slope",
+        action="store_true",
+        help="Experiment: require the trend EMA200 to be rising vs the prior bar",
+    )
+    bt.add_argument(
+        "--chop-filter",
+        action="store_true",
+        help="Experiment: skip entries when ATR% is below its 200-bar 25th percentile",
+    )
+    bt.add_argument(
+        "--rsi-from",
+        type=float,
+        default=None,
+        help="Experiment: require previous RSI below this (still cross up through 40)",
+    )
+    bt.add_argument(
+        "--breakeven-r",
+        type=float,
+        default=None,
+        help="Experiment: after +N×R favorable, move stop to cost-aware breakeven",
+    )
 
     dry = sub.add_parser(
         "dry-run",
@@ -214,8 +236,8 @@ def _session_from_args(args) -> SessionWindow | None:
     end_raw = getattr(args, "session_end", None)
     if preset_name:
         base = SESSION_PRESETS[preset_name]
-    elif profile_name == "us-session":
-        base = PROFILES["us-session"].session
+    elif profile_name in {"us-session", "us-session-1h"}:
+        base = PROFILES[profile_name].session
     elif start_raw or end_raw:
         base = SESSION_PRESETS["us-primary"]
     else:
@@ -393,6 +415,13 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        extra = ExtraFilters(
+            require_ema_slope=bool(getattr(args, "ema_slope", False)),
+            chop_filter=bool(getattr(args, "chop_filter", False)),
+            rsi_from=getattr(args, "rsi_from", None),
+        )
+        breakeven_r = getattr(args, "breakeven_r", None)
+        extras_on = extra.require_ema_slope or extra.chop_filter or extra.rsi_from is not None or breakeven_r
         if entry_tf == "1m":
             print(
                 "EXPERIMENT: 1m entry / "
@@ -404,14 +433,24 @@ def main(argv: list[str] | None = None) -> int:
             "4h",
         } or args.reward_risk is not None or (
             args.tp_atr is not None and args.tp_atr != TP_ATR_MULT
-        ):
+        ) or extras_on:
+            bits = []
+            if extra.require_ema_slope:
+                bits.append("ema-slope")
+            if extra.chop_filter:
+                bits.append("chop-filter")
+            if extra.rsi_from is not None:
+                bits.append(f"rsi-from {extra.rsi_from:g}")
+            if breakeven_r is not None:
+                bits.append(f"BE@{breakeven_r:g}R")
             print(
                 f"EXPERIMENT: profile={profile_name} / {entry_tf} entry / "
                 f"{trend_tf} EMA200 / "
                 f"stop {stop_atr:g}×ATR / TP {tp_atr:g}×ATR "
                 f"(RR 1:{tp_atr / stop_atr:g})"
-                + (f" / {session.label}." if session else ".")
-                + " Product default remains 1h/4h 24/7 with TP=2×ATR. "
+                + (f" / {session.label}" if session else "")
+                + (f" / extras: {', '.join(bits)}" if bits else "")
+                + ". Product default remains 1h/4h 24/7 with TP=2×ATR. "
                 "Order-book filters skipped (no historical L2)."
             )
         result = run_backtest(
@@ -425,6 +464,8 @@ def main(argv: list[str] | None = None) -> int:
             tp_atr_mult=tp_atr,
             session=session,
             profile=profile_name,
+            extra=extra,
+            breakeven_r=breakeven_r,
         )
         print(format_report(result))
         return 0

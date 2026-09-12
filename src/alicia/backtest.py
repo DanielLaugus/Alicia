@@ -13,7 +13,7 @@ from alicia.config import Settings, load_settings
 from alicia.indicators import attach_indicators
 from alicia.risk import MonthlyDrawdownGuard, size_from_settings
 from alicia.session import SessionWindow, session_allows_signal
-from alicia.strategy import EntryDecision, evaluate_entry, stop_price, take_profit_price
+from alicia.strategy import ExtraFilters, EntryDecision, evaluate_entry, stop_price, take_profit_price
 
 
 @dataclass
@@ -25,6 +25,7 @@ class Trade:
     exit_price: float | None
     qty: float
     stop: float
+    initial_stop: float
     take_profit: float
     reason_entry: str
     reason_exit: str | None = None
@@ -49,6 +50,8 @@ class BacktestResult:
     tp_atr_mult: float = 2.0
     session_label: str | None = None
     profile: str = "default"
+    extra_filters: ExtraFilters = field(default_factory=ExtraFilters)
+    breakeven_r: float | None = None
 
     @property
     def closed_trades(self) -> list[Trade]:
@@ -147,6 +150,8 @@ def run_backtest(
     profile: str = "default",
     entry_from: pd.Timestamp | None = None,
     entry_until: pd.Timestamp | None = None,
+    extra: ExtraFilters | None = None,
+    breakeven_r: float | None = None,
 ) -> BacktestResult:
     settings = settings or load_settings()
     calendar = calendar if calendar is not None else calendar_from_settings(settings)
@@ -172,6 +177,8 @@ def run_backtest(
         tp_atr_mult=tp_atr_mult,
         session_label=session.label if session is not None else None,
         profile=profile,
+        extra_filters=extra or ExtraFilters(),
+        breakeven_r=breakeven_r,
     )
     equity_points: list[tuple[pd.Timestamp, float]] = []
 
@@ -214,6 +221,7 @@ def run_backtest(
                     exit_price=None,
                     qty=trade_qty,
                     stop=stop,
+                    initial_stop=stop,
                     take_profit=take,
                     reason_entry=pending_entry["reason"],
                     fees_quote=entry_fee,
@@ -226,6 +234,13 @@ def run_backtest(
         if position is not None and position.exit_time is None:
             low = float(row["low"])
             high = float(row["high"])
+            if breakeven_r is not None and breakeven_r > 0:
+                risk = position.entry_price - position.initial_stop
+                if risk > 0 and high >= position.entry_price + breakeven_r * risk:
+                    # Cost-aware BE: cover round-trip fee + slippage so a BE stop is ~flat.
+                    be = position.entry_price * (1.0 + 2.0 * fee + 2.0 * slip)
+                    if be > position.stop:
+                        position.stop = be
             exit_px: float | None = None
             reason_exit: str | None = None
             if low <= position.stop:
@@ -271,6 +286,9 @@ def run_backtest(
             in_entry_span = False
         session_ok = in_entry_span and session_allows_signal(ts, entry_timeframe, session)
 
+        ema_prev = row["ema200_prev"] if "ema200_prev" in frame.columns else None
+        atr_pct = row["atr_pct"] if "atr_pct" in frame.columns else None
+        atr_q = row["atr_pct_q25"] if "atr_pct_q25" in frame.columns else None
         decision = evaluate_entry(
             price=mark,
             ema200_4h=None if pd.isna(ema) else float(ema),
@@ -282,6 +300,10 @@ def run_backtest(
             paused=paused,
             pause_reason=pause_reason,
             session_ok=session_ok,
+            extra=extra,
+            ema200_prev=None if ema_prev is None or pd.isna(ema_prev) else float(ema_prev),
+            atr_pct=None if atr_pct is None or pd.isna(atr_pct) else float(atr_pct),
+            atr_pct_q25=None if atr_q is None or pd.isna(atr_q) else float(atr_q),
         )
         if i % max(len(frame) // 8, 1) == 0 or decision.enter:
             result.decisions_sampled.append((ts, decision))
@@ -328,6 +350,8 @@ def run_backtest(
             profile=profile,
             entry_from=entry_from,
             entry_until=entry_until,
+            extra=extra,
+            breakeven_r=breakeven_r,
         )
         result.zero_cost_end_equity = baseline.end_equity
     return result
