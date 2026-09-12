@@ -87,8 +87,8 @@ def test_cli_us_session_profile_banner(capsys):
     assert code == 0
     assert "EXPERIMENT" in captured.out
     assert "profile=us-session" in captured.out
-    assert "2h entry" in captured.out
-    assert "8h EMA200" in captured.out
-    assert "13:30" in captured.out
-    assert "20:00" in captured.out
+    assert "4h entry" in captured.out
+    assert "12h EMA200" in captured.out
+    assert "13:00" in captured.out
+    assert "17:00" in captured.out
     assert "3×ATR" in captured.out or "3.0×ATR" in captured.out

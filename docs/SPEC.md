@@ -109,6 +109,23 @@ Historical L2 is **not** available from the public REST history used for candles
 - This repository **must not** implement withdrawal, transfer, or funding-destination changes.
 - Never commit secrets. Use `.env` locally from `.env.example`.
 
+## Optional profile — US session bot
+
+**Not the product default.** Product entries are 24/7 on 1h/4h. Enable with `python -m alicia backtest --profile us-session`.
+
+Winning bundle after a small A/B (see `docs/BACKTEST.md` § US session bot):
+
+| Item | Value |
+| --- | --- |
+| Entry / trend | 4h / 12h EMA200 |
+| Session | **13:00–17:00 UTC Mon–Fri** (London–NY overlap). Signal clock = **completed bar close** (index is bar open). |
+| Off-hours | **No new entries.** Open positions still hit stop/TP anytime (no flat-by-close). |
+| Stop / TP | 1.5×ATR / 3.0×ATR (RR 1:2) |
+| Weekends | No new entries (UTC Saturday/Sunday). On 4h this did not change fills vs all-days. |
+| UTC clock | Fixed hours, **not** DST-shifted ET. |
+
+Do not promote this profile to the product default unless a later sample is clearly profitable after fees.
+
 ## Execution assumptions (backtest)
 
 - Fees: `FEE_BPS` on each side (entry and exit), applied to fill notional.

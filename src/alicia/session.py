@@ -88,13 +88,13 @@ class StrategyProfile:
     stop_atr: float = 1.5
 
 
-# Winning US-session defaults are filled after the A/B; 2h + RR 1:2 + primary
-# is the starting proposal from prior TF experiments.
+# Winning bundle after train/test A/B (see docs/BACKTEST.md § US session bot).
+# 4h + 12h + RR 1:2 + London–NY overlap beat 2h and the wider 13:30–20:00 window.
 PROFILE_US_SESSION = StrategyProfile(
     name="us-session",
-    entry_timeframe="2h",
-    trend_timeframe="8h",
-    session=US_PRIMARY,
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=US_OVERLAP,
     reward_risk=2.0,
     stop_atr=1.5,
 )

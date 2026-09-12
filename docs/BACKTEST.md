@@ -198,3 +198,67 @@ Still not clearly strong (losing after costs, one trade still open). Do not prom
 python -m alicia backtest
 ```
 
+## US session bot
+
+**Not the product default. Not live-money advice.** Named profile `us-session` only allows **new** entries when the **completed bar close** falls in a US-liquidity UTC window. Stops and take-profits still manage **anytime** (no flat-by-end-of-session). Order-book filters are **skipped** (no historical L2). Same €2,000 / 2% risk / 10 bps fee / 5 bps slip / −10% monthly kill-switch.
+
+```bash
+python -m alicia backtest --profile us-session
+```
+
+Clock is **fixed UTC**, not DST-adjusted 9:30 ET. 4h/2h bars are even-hour aligned, so a ±1h nudge around 13:30–20:00 does **not** add or drop bars (documented no-op). Session is judged on bar **close** = index + TF length.
+
+### Winning config (selected on train, checked on test)
+
+| Item | Value |
+| --- | --- |
+| Profile | `us-session` |
+| Entry / trend | **4h** / **12h EMA200** |
+| Session | **13:00–17:00 UTC Mon–Fri** (`us-overlap`, London–NY peak) |
+| Stop / TP | **1.5 × ATR** / **3.0 × ATR** (RR **1:2**) |
+| Off-hours / weekends | No new entries. Existing positions keep stop/TP. |
+| Data | OKX native 4h · 4,379 bars · 2024-09-12 20:00 → 2026-09-12 12:00 UTC |
+| Split | Train entries **before 2025-09-12**; OOS entries **on/after 2025-09-12**. Indicators computed on the full series (no warmup hole). Fresh €2,000 at the start of each split run. |
+
+### Why this bundle
+
+Discrete A/B only (no RSI-level search):
+
+1. **TF × RR** on primary 13:30–20:00 weekdays (train): **4h + RR 1:2** (−5.03%, DD −7.76%) beat 4h product-TP, 2h+1:2, and 2h product-TP.
+2. **Session** on that winner (train): **overlap 13:00–17:00** (−1.55%) beat primary 13:30–20:00 (−5.03%) and a 12:00–20:00 window that actually adds the 12:00-close 4h bar (−10.25%). `us-wide` (±1h) matched primary exactly. Weekends-on matched weekdays (no extra 4h fills).
+3. **OOS** (2025-09-12 → 2026-09-12): overlap and primary produced the **same two trades**, **+0.87%**, DD −4.22%. Too few trades to claim a live edge — only that the train pick did not blow up.
+
+### Full-sample results (fees + slippage included)
+
+| Metric | **US-session winner** | 4h/12h 24/7 RR 1:2 | 2h/8h 24/7 RR 1:2 | Product 1h/4h | 1m (60d) |
+| --- | --- | --- | --- | --- | --- |
+| Trades | **8** closed (**1 open**) | 22 + 1 open | 47 | 92 | 109 |
+| Wins / losses | **3 / 5** | 7 / 15 | 15 / 32 | 38 / 54 | 0 / 109 |
+| Win rate | **37.50%** | 31.82% | 31.91% | 41.30% | 0.00% |
+| Equity | 2,000.00 → **1,986.18** | 1,841.37 | 1,734.11 | 1,498.36 | 1,450.86 |
+| Return | **−0.69%** | −7.93% | −13.29% | −25.08% | −27.46% |
+| Max drawdown | **−6.61%** | −14.44% | −15.34% | −28.92% | −27.46% |
+| Closed PnL | −2.05 USDT | −147.71 | −265.89 | −501.64 | −549.14 |
+| Fees / slippage | 32.01 / 16.01 | 84.13 / 42.07 | 167.85 / 83.93 | 316.00 / 158.00 | 373.42 / 186.71 |
+| Cost impact | 40.07 (zero-cost equity **2,026.24**) | 101.19 | 211.40 | 419.57 | 603.25 |
+
+Last fills: 2025-08-22 16:00 stop −41.11 · 2025-08-25 16:00 stop −41.02 · 2026-09-02 16:00 TP +62.82 · 2026-09-08 16:00 stop −33.82 · 2026-09-11 16:00 **OPEN**.
+
+### Train / test (winner vs primary window)
+
+| Split | Overlap 13:00–17:00 (winner) | Primary 13:30–20:00 |
+| --- | --- | --- |
+| Train | 6 trades · −1.55% · DD −6.53% | 10 · −5.03% · −7.76% |
+| Test OOS | 2 trades + 1 open · **+0.87%** · DD −4.22% | same 2 + 1 · **+0.87%** · −4.22% |
+| Full | 8 + 1 · **−0.69%** · −6.61% | 12 + 1 · −4.20% · −7.85% |
+
+### Honesty
+
+After fees this profile is **still slightly negative** on the full ~2y sample (−0.69%). Zero-cost equity is only +1.3% — costs consume a thin edge. The OOS “profit” is **two trades** and is not evidence the bot is ready for live money. Max DD stayed inside the −20% goal. Better than 24/7 4h/2h/1h/1m on this window because it **trades less**, not because a large US-hours alpha appeared.
+
+Do not promote to the product default. Product remains:
+
+```bash
+python -m alicia backtest
+```
+
