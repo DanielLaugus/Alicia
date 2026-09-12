@@ -15,6 +15,10 @@ def test_load_settings_defaults_without_env_file(tmp_path, monkeypatch):
     assert settings.orderbook_enabled
     assert settings.orderbook_require
     assert not settings.orderbook_in_backtest
+    assert settings.orderbook_max_spread_bps == 2.0
+    assert settings.orderbook_imbalance_min == 0.20
+    assert settings.orderbook_min_bid_depth == 2.0
+    assert settings.orderbook_depth_bps == 5.0
 
 
 def test_env_example_has_no_secret_values():

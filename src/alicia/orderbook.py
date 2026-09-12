@@ -188,7 +188,7 @@ def evaluate_book_filters(
         return BookDecision(
             False,
             f"imbalance {metrics.imbalance:.3f} < min {imbalance_min:g} "
-            f"(top {levels} levels; need bid-heavy / not ask-heavy)",
+            f"(top {levels} levels; need clearly bid-heavy, imbalance ≥ {imbalance_min:g})",
             metrics,
         )
     if metrics.bid_depth < min_bid_depth:

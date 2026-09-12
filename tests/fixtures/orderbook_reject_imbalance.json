@@ -1,0 +1,15 @@
+{
+  "symbol": "BTC/USDT",
+  "timestamp": 1717200000000,
+  "comment": "Tight spread and enough depth, but imbalance only ~+0.05 — fails the +0.20 bid-heavy rule.",
+  "bids": [
+    [66999.0, 1.2],
+    [66998.0, 1.0],
+    [66997.0, 0.8]
+  ],
+  "asks": [
+    [67001.0, 1.1],
+    [67002.0, 1.0],
+    [67003.0, 0.75]
+  ]
+}

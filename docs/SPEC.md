@@ -74,19 +74,19 @@ Public depth is read with ccxt `fetch_order_book` (**no API key**). Practical de
 
 - `mid = (best_bid + best_ask) / 2`
 - `spread_bps = (best_ask − best_bid) / mid × 10_000`
-- Enter only if `spread_bps ≤ ORDERBOOK_MAX_SPREAD_BPS` (default **5**).
+- Enter only if `spread_bps ≤ ORDERBOOK_MAX_SPREAD_BPS` (default **2**).
 
 ### OB-2 — Imbalance (top N)
 
 - Top **N** levels (default `ORDERBOOK_LEVELS=10`), best first.
 - `imbalance = (bid_vol − ask_vol) / (bid_vol + ask_vol)` in `[-1, +1]`
-- Enter long only if `imbalance ≥ ORDERBOOK_IMBALANCE_MIN` (default **0** = bid-heavy or balanced, **not ask-heavy**).
+- Enter long only if `imbalance ≥ ORDERBOOK_IMBALANCE_MIN` (default **+0.20** = clearly bid-heavy, not merely non-ask-heavy).
 
 ### OB-3 — Bid depth near mid
 
 - Sum **bid-side base size** (BTC) with `price ≥ mid × (1 − ORDERBOOK_DEPTH_BPS / 10_000)`
-- Default band: **10 bps** from mid.
-- Enter only if that size ≥ `ORDERBOOK_MIN_BID_DEPTH` (default **1.0 BTC**).
+- Default band: **5 bps** from mid.
+- Enter only if that size ≥ `ORDERBOOK_MIN_BID_DEPTH` (default **2.0 BTC**).
 
 ### Fail closed
 

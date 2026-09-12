@@ -15,7 +15,7 @@ Market: **BTC/USDT spot** · Entry TF: **1h** · Trend TF: **4h** · **LONG only
 3. **Stop & target.** Stop = 1.5 × ATR(14, 1h) below entry. Take-profit = 2 × ATR(14, 1h) above entry. **No averaging down.**
 4. **Position sizing.** Notional positions up to **€200** are allowed. Above that, size so that a stop loss risks **1–3% of bot capital** (quantity derived from stop distance). **Max one open position.**
 5. **Kill-switch.** Halt / pause on **−10% monthly drawdown**; pause on **CPI / Fed / NFP** days (flags + JSON calendar); pause on **API / latency** errors.
-6. **Order book (paper/live).** New LONG also needs a public L2 snapshot: spread ≤ max bps, top-N imbalance not ask-heavy, and enough bid depth near mid. Missing book → no entry when required. **Not applied to historical backtests** (no real L2 history).
+6. **Order book (paper/live).** New LONG also needs a public L2 snapshot: spread ≤ **2 bps**, top-N imbalance ≥ **+0.20** (clearly bid-heavy), and ≥ **2.0 BTC** bid depth within **5 bps** of mid. Missing book → no entry when required. **Not applied to historical backtests** (no real L2 history).
 
 Indicators: EMA200(4h), RSI(14) 1h, volume vs MA20, ATR(14) 1h, plus live L2 spread / imbalance / depth.
 
@@ -140,11 +140,11 @@ A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing 
 | `ORDERBOOK_ENABLED` | `true` | Apply L2 gate on paper/live |
 | `ORDERBOOK_REQUIRE` | `true` | Fail closed if the book is missing |
 | `ORDERBOOK_IN_BACKTEST` | `false` | Do not invent historical books |
-| `ORDERBOOK_MAX_SPREAD_BPS` | `5` | Max (ask−bid)/mid |
+| `ORDERBOOK_MAX_SPREAD_BPS` | `2` | Max (ask−bid)/mid |
 | `ORDERBOOK_LEVELS` | `10` | Top-N for imbalance |
-| `ORDERBOOK_IMBALANCE_MIN` | `0` | `(bid−ask)/(bid+ask)` floor (0 = not ask-heavy) |
-| `ORDERBOOK_MIN_BID_DEPTH` | `1` | Min bid BTC within the depth band |
-| `ORDERBOOK_DEPTH_BPS` | `10` | Band around mid for the depth sum |
+| `ORDERBOOK_IMBALANCE_MIN` | `0.20` | `(bid−ask)/(bid+ask)` floor (clearly bid-heavy) |
+| `ORDERBOOK_MIN_BID_DEPTH` | `2` | Min bid BTC within the depth band |
+| `ORDERBOOK_DEPTH_BPS` | `5` | Band around mid for the depth sum |
 | `ORDERBOOK_LIMIT` | `20` | `fetch_order_book` depth |
 | `ORDERBOOK_EXCHANGE` | `okx` | Public L2 venue (no key) |
 
