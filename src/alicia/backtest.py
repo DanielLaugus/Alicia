@@ -20,6 +20,7 @@ from alicia.strategy import (
     decide_entry,
     stop_from_mode,
     take_profit_price,
+    take_profit_price_short,
 )
 
 
@@ -39,6 +40,7 @@ class Trade:
     pnl_quote: float | None = None
     fees_quote: float = 0.0
     slippage_quote: float = 0.0
+    side: str = "long"
 
 
 @dataclass
@@ -63,6 +65,8 @@ class BacktestResult:
     donchian_n: int = DONCHIAN_N
     trail_atr: float | None = None
     stop_mode: str = "atr"
+    side: str = "long"
+    vol_target: float | None = None
 
     @property
     def closed_trades(self) -> list[Trade]:
@@ -93,6 +97,7 @@ class BacktestResult:
             "donchian_n": self.donchian_n,
             "trail_atr": self.trail_atr,
             "stop_mode": self.stop_mode,
+            "side": self.side,
             "reward_risk": None
             if self.trail_atr
             else (
@@ -173,6 +178,9 @@ def run_backtest(
     donchian_n: int = DONCHIAN_N,
     trail_atr: float | None = None,
     stop_mode: str = "atr",
+    side: str = "long",
+    vol_target: float | None = None,
+    funding: pd.Series | None = None,
 ) -> BacktestResult:
     settings = settings or load_settings()
     calendar = calendar if calendar is not None else calendar_from_settings(settings)
@@ -182,9 +190,23 @@ def run_backtest(
         raise ValueError("donchian_n must be >= 1")
     if trail_atr is not None and trail_atr <= 0:
         raise ValueError("trail_atr must be positive")
+    side = (side or "long").strip().lower()
+    if side not in {"long", "short", "both"}:
+        raise ValueError("side must be long, short, or both")
+    if vol_target is not None and vol_target <= 0:
+        raise ValueError("vol_target must be positive")
     frame = attach_indicators(
         ohlcv_1h, trend_timeframe=trend_timeframe, donchian_n=donchian_n
     )
+    if funding is not None and not funding.empty:
+        fund = funding.copy().astype("float64")
+        if fund.index.tz is None:
+            fund.index = fund.index.tz_localize("UTC")
+        else:
+            fund.index = fund.index.tz_convert("UTC")
+        aligned = fund.sort_index().reindex(frame.index, method="ffill")
+        # Only the last completed funding print is visible — no same-bar lookahead.
+        frame["funding"] = aligned.shift(1)
     if entry_from is not None:
         entry_from = pd.Timestamp(entry_from)
         entry_from = entry_from.tz_localize("UTC") if entry_from.tzinfo is None else entry_from.tz_convert("UTC")
@@ -212,6 +234,8 @@ def run_backtest(
         donchian_n=donchian_n,
         trail_atr=trail_atr,
         stop_mode=stop_mode,
+        side=side,
+        vol_target=vol_target,
     )
     equity_points: list[tuple[pd.Timestamp, float]] = []
 
@@ -222,7 +246,8 @@ def run_backtest(
         row = frame.iloc[i]
         ts = frame.index[i]
         mark = float(row["close"])
-        equity = cash + qty * mark
+        pos_side = position.side if position is not None and position.exit_time is None else "long"
+        equity = cash - qty * mark if pos_side == "short" else cash + qty * mark
         equity_points.append((ts, equity))
         halted = dd.update(_as_utc_ts(ts), equity)
         if halted and dd.reason and dd.reason not in result.halt_events:
@@ -231,21 +256,43 @@ def run_backtest(
         # Fill a signal from the previous closed bar at this bar's open.
         if pending_entry is not None and position is None:
             raw_entry = float(row["open"])
-            fill = apply_buy_slippage(raw_entry, slip)
+            trade_side = pending_entry.get("side", "long")
+            if trade_side == "short":
+                fill = apply_sell_slippage(raw_entry, slip)
+            else:
+                fill = apply_buy_slippage(raw_entry, slip)
             stop = float(pending_entry["stop_fn"](fill))
             take = pending_entry["tp_fn"](fill)
-            take = float("inf") if take is None else float(take)
+            if take is None:
+                take = float("-inf") if trade_side == "short" else float("inf")
+            else:
+                take = float(take)
+            # Shorts are futures-like research: size vs stop without a cash-buy constraint.
+            avail = None if trade_side == "short" else cash
             trade_qty = size_from_settings(
                 settings,
                 entry_price=fill,
                 stop=stop,
                 capital_eur=equity,
-                available_quote=cash,
+                available_quote=avail,
+                side=trade_side,
             )
+            atr_pct_sig = pending_entry.get("atr_pct")
+            if (
+                trade_qty > 0
+                and vol_target is not None
+                and atr_pct_sig is not None
+                and atr_pct_sig > 0
+            ):
+                trade_qty *= min(1.0, float(vol_target) / float(atr_pct_sig))
             if trade_qty > 0:
                 entry_fee = fill * trade_qty * fee
-                entry_slip = (fill - raw_entry) * trade_qty
-                cash -= fill * trade_qty + entry_fee
+                if trade_side == "short":
+                    entry_slip = (raw_entry - fill) * trade_qty
+                    cash += fill * trade_qty - entry_fee
+                else:
+                    entry_slip = (fill - raw_entry) * trade_qty
+                    cash -= fill * trade_qty + entry_fee
                 qty = trade_qty
                 position = Trade(
                     signal_time=pending_entry["signal_time"],
@@ -260,6 +307,7 @@ def run_backtest(
                     reason_entry=pending_entry["reason"],
                     fees_quote=entry_fee,
                     slippage_quote=entry_slip,
+                    side=trade_side,
                 )
                 result.trades.append(position)
             pending_entry = None
@@ -269,15 +317,32 @@ def run_backtest(
             low = float(row["low"])
             high = float(row["high"])
             if breakeven_r is not None and breakeven_r > 0:
-                risk = position.entry_price - position.initial_stop
-                if risk > 0 and high >= position.entry_price + breakeven_r * risk:
+                risk = abs(position.entry_price - position.initial_stop)
+                if position.side == "short":
+                    if risk > 0 and low <= position.entry_price - breakeven_r * risk:
+                        be = position.entry_price * (1.0 - 2.0 * fee - 2.0 * slip)
+                        if be < position.stop:
+                            position.stop = be
+                elif risk > 0 and high >= position.entry_price + breakeven_r * risk:
                     # Cost-aware BE: cover round-trip fee + slippage so a BE stop is ~flat.
                     be = position.entry_price * (1.0 + 2.0 * fee + 2.0 * slip)
                     if be > position.stop:
                         position.stop = be
             exit_px: float | None = None
             reason_exit: str | None = None
-            if low <= position.stop:
+            if position.side == "short":
+                if high >= position.stop:
+                    raw_exit = position.stop
+                    exit_px = apply_buy_slippage(raw_exit, slip)
+                    trailed = trail_atr is not None and position.stop < position.initial_stop - 1e-12
+                    reason_exit = "trail" if trailed else "stop"
+                elif position.take_profit > float("-inf") and low <= position.take_profit:
+                    raw_exit = position.take_profit
+                    exit_px = apply_buy_slippage(raw_exit, slip)
+                    reason_exit = "take-profit"
+                else:
+                    raw_exit = None
+            elif low <= position.stop:
                 raw_exit = position.stop
                 exit_px = apply_sell_slippage(raw_exit, slip)
                 trailed = trail_atr is not None and position.stop > position.initial_stop + 1e-12
@@ -290,23 +355,37 @@ def run_backtest(
                 raw_exit = None
             if exit_px is not None and raw_exit is not None:
                 exit_fee = exit_px * position.qty * fee
-                exit_slip = (raw_exit - exit_px) * position.qty
-                cash += exit_px * position.qty - exit_fee
+                if position.side == "short":
+                    exit_slip = (exit_px - raw_exit) * position.qty
+                    cash -= exit_px * position.qty + exit_fee
+                else:
+                    exit_slip = (raw_exit - exit_px) * position.qty
+                    cash += exit_px * position.qty - exit_fee
                 position.exit_time = ts
                 position.exit_price = exit_px
                 position.reason_exit = reason_exit
                 position.fees_quote += exit_fee
                 position.slippage_quote += exit_slip
-                position.pnl_quote = (
-                    (exit_px - position.entry_price) * position.qty - position.fees_quote
-                )
+                if position.side == "short":
+                    position.pnl_quote = (
+                        (position.entry_price - exit_px) * position.qty - position.fees_quote
+                    )
+                else:
+                    position.pnl_quote = (
+                        (exit_px - position.entry_price) * position.qty - position.fees_quote
+                    )
                 qty = 0.0
                 position = None
             elif trail_atr is not None and not pd.isna(row["atr_14"]) and float(row["atr_14"]) > 0:
                 # Ratchet after this bar's exit check (uses completed close; no intra-bar trail).
-                new_stop = mark - float(trail_atr) * float(row["atr_14"])
-                if new_stop > position.stop:
-                    position.stop = new_stop
+                if position.side == "short":
+                    new_stop = mark + float(trail_atr) * float(row["atr_14"])
+                    if new_stop < position.stop:
+                        position.stop = new_stop
+                else:
+                    new_stop = mark - float(trail_atr) * float(row["atr_14"])
+                    if new_stop > position.stop:
+                        position.stop = new_stop
 
         has_open = position is not None and position.exit_time is None
         event_reason = calendar.pause_reason(_as_utc_ts(ts).date())
@@ -332,29 +411,51 @@ def run_backtest(
         atr_q = row["atr_pct_q25"] if "atr_pct_q25" in frame.columns else None
         close_prev = row["close_prev"] if "close_prev" in frame.columns else None
         donch = row["donchian_high"] if "donchian_high" in frame.columns else None
+        donch_low = row["donchian_low"] if "donchian_low" in frame.columns else None
         ema20_v = row["ema20"] if "ema20" in frame.columns else None
-        decision = decide_entry(
-            signal,
-            price=mark,
-            ema200_4h=None if pd.isna(ema) else float(ema),
-            rsi_value=None if pd.isna(rsi_v) else float(rsi_v),
-            prev_rsi=None if pd.isna(rsi_p) else float(rsi_p),
-            volume=float(row["volume"]),
-            volume_ma=None if pd.isna(vol_ma) else float(vol_ma),
-            has_open_position=has_open or pending_entry is not None,
-            paused=paused,
-            pause_reason=pause_reason,
-            session_ok=session_ok,
-            extra=extra,
-            ema200_prev=None if ema_prev is None or pd.isna(ema_prev) else float(ema_prev),
-            ema50=None if ema50_v is None or pd.isna(ema50_v) else float(ema50_v),
-            atr_pct=None if atr_pct is None or pd.isna(atr_pct) else float(atr_pct),
-            atr_pct_q25=None if atr_q is None or pd.isna(atr_q) else float(atr_q),
-            prev_close=None if close_prev is None or pd.isna(close_prev) else float(close_prev),
-            donchian_high=None if donch is None or pd.isna(donch) else float(donch),
-            donchian_n=donchian_n,
-            ema20=None if ema20_v is None or pd.isna(ema20_v) else float(ema20_v),
-        )
+        adx_v = row["adx_14"] if "adx_14" in frame.columns else None
+        plus_v = row["plus_di"] if "plus_di" in frame.columns else None
+        minus_v = row["minus_di"] if "minus_di" in frame.columns else None
+        atr_halt = row["atr_pct_q90"] if "atr_pct_q90" in frame.columns else None
+        fund_v = row["funding"] if "funding" in frame.columns else None
+
+        def _decision_for(trade_side: str) -> EntryDecision:
+            return decide_entry(
+                signal,
+                price=mark,
+                ema200_4h=None if pd.isna(ema) else float(ema),
+                rsi_value=None if pd.isna(rsi_v) else float(rsi_v),
+                prev_rsi=None if pd.isna(rsi_p) else float(rsi_p),
+                volume=float(row["volume"]),
+                volume_ma=None if pd.isna(vol_ma) else float(vol_ma),
+                has_open_position=has_open or pending_entry is not None,
+                paused=paused,
+                pause_reason=pause_reason,
+                session_ok=session_ok,
+                extra=extra,
+                ema200_prev=None if ema_prev is None or pd.isna(ema_prev) else float(ema_prev),
+                ema50=None if ema50_v is None or pd.isna(ema50_v) else float(ema50_v),
+                atr_pct=None if atr_pct is None or pd.isna(atr_pct) else float(atr_pct),
+                atr_pct_q25=None if atr_q is None or pd.isna(atr_q) else float(atr_q),
+                prev_close=None if close_prev is None or pd.isna(close_prev) else float(close_prev),
+                donchian_high=None if donch is None or pd.isna(donch) else float(donch),
+                donchian_low=None if donch_low is None or pd.isna(donch_low) else float(donch_low),
+                donchian_n=donchian_n,
+                ema20=None if ema20_v is None or pd.isna(ema20_v) else float(ema20_v),
+                adx=None if adx_v is None or pd.isna(adx_v) else float(adx_v),
+                plus_di=None if plus_v is None or pd.isna(plus_v) else float(plus_v),
+                minus_di=None if minus_v is None or pd.isna(minus_v) else float(minus_v),
+                atr_pct_halt=None if atr_halt is None or pd.isna(atr_halt) else float(atr_halt),
+                funding=None if fund_v is None or pd.isna(fund_v) else float(fund_v),
+                side=trade_side,
+            )
+
+        sides_to_try = ("long", "short") if side == "both" else (side,)
+        decision = _decision_for(sides_to_try[0])
+        chosen_side = sides_to_try[0]
+        if not decision.enter and len(sides_to_try) > 1:
+            decision = _decision_for(sides_to_try[1])
+            chosen_side = sides_to_try[1]
         if i % max(len(frame) // 8, 1) == 0 or decision.enter:
             result.decisions_sampled.append((ts, decision))
 
@@ -368,22 +469,36 @@ def run_backtest(
         ):
             atr_signal = float(atr_v)
             signal_low = float(row["low"])
+            signal_high = float(row["high"])
+            atr_pct_sig = None if atr_pct is None or pd.isna(atr_pct) else float(atr_pct)
             pending_entry = {
                 "signal_time": ts,
                 "reason": decision.reason,
-                "stop_fn": lambda fill, a=atr_signal, lo=signal_low: stop_from_mode(
+                "side": chosen_side,
+                "atr_pct": atr_pct_sig,
+                "stop_fn": lambda fill, a=atr_signal, lo=signal_low, hi=signal_high, sd=chosen_side: stop_from_mode(
                     fill,
                     a,
                     atr_mult=stop_atr_mult,
                     signal_low=lo,
+                    signal_high=hi,
                     mode=stop_mode,
+                    side=sd,
                 ),
                 "tp_fn": (
                     (lambda fill: None)
                     if trail_atr is not None
                     else (
-                        lambda fill, a=atr_signal: take_profit_price(
-                            fill, a, atr_mult=tp_atr_mult
+                        (
+                            lambda fill, a=atr_signal: take_profit_price_short(
+                                fill, a, atr_mult=tp_atr_mult
+                            )
+                        )
+                        if chosen_side == "short"
+                        else (
+                            lambda fill, a=atr_signal: take_profit_price(
+                                fill, a, atr_mult=tp_atr_mult
+                            )
                         )
                     )
                 ),
@@ -391,7 +506,10 @@ def run_backtest(
 
     # Mark-to-market open position at the last close (not a forced exit).
     last_close = float(frame["close"].iloc[-1])
-    result.end_equity = cash + qty * last_close
+    if position is not None and position.exit_time is None and position.side == "short":
+        result.end_equity = cash - qty * last_close
+    else:
+        result.end_equity = cash + qty * last_close
     result.equity_curve = pd.Series(
         {t: e for t, e in equity_points},
         name="equity",
@@ -417,6 +535,9 @@ def run_backtest(
             donchian_n=donchian_n,
             trail_atr=trail_atr,
             stop_mode=stop_mode,
+            side=side,
+            vol_target=vol_target,
+            funding=funding,
         )
         result.zero_cost_end_equity = baseline.end_equity
     return result
@@ -425,7 +546,14 @@ def run_backtest(
 def format_report(result: BacktestResult) -> str:
     s = result.summary()
     lines = [
-        "Alicia backtest — BTC/USDT spot, LONG only",
+        "Alicia backtest — BTC/USDT "
+        + (
+            "futures-like LONG+SHORT research"
+            if s.get("side") == "both"
+            else "futures-like SHORT research"
+            if s.get("side") == "short"
+            else "spot, LONG only"
+        ),
         f"  source:        {s['source']}",
         f"  timeframes:    entry {s['entry_timeframe']} / trend EMA200 {s['trend_timeframe']}",
         (
@@ -438,7 +566,8 @@ def format_report(result: BacktestResult) -> str:
             )
         ),
         f"  signal:        {s['signal']}"
-        + (f"  Donchian N={s['donchian_n']}" if s["signal"] == "breakout" else ""),
+        + (f"  Donchian N={s['donchian_n']}" if s["signal"] in {"breakout", "regime"} else "")
+        + (f"  side {s.get('side', 'long')}" if s.get("side") and s.get("side") != "long" else ""),
         f"  profile:       {s['profile']}"
         + (f"  session {s['session']}" if s["session"] else "  session 24/7 (product)"),
         f"  bars:          {s['bars']}  ({s['first_bar']} → {s['last_bar']})",

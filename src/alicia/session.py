@@ -117,6 +117,8 @@ class StrategyProfile:
     donchian_n: int = 20
     trail_atr: float | None = None
     stop_mode: str = "atr"
+    side: str = "long"
+    vol_target: float | None = None
 
 
 PROFILE_US_SESSION = StrategyProfile(
@@ -239,6 +241,72 @@ PROFILE_PULLBACK = StrategyProfile(
     signal="pullback",
 )
 
+# Regime search (ADX). Product RSI default is unchanged.
+PROFILE_REGIME = StrategyProfile(
+    name="regime",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=2.0,
+    signal="regime",
+    extra=ExtraFilters(adx_split=25.0),
+)
+PROFILE_REGIME_US = StrategyProfile(
+    name="regime-us",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=US_PEAK,
+    reward_risk=2.0,
+    signal="regime",
+    extra=ExtraFilters(adx_split=25.0),
+)
+PROFILE_REGIME_2H = StrategyProfile(
+    name="regime-2h",
+    entry_timeframe="2h",
+    trend_timeframe="8h",
+    session=None,
+    reward_risk=2.0,
+    signal="regime",
+    extra=ExtraFilters(adx_split=25.0),
+)
+PROFILE_TREND_ADX = StrategyProfile(
+    name="trend-adx",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=2.0,
+    signal="breakout",
+    extra=ExtraFilters(adx_min=25.0, require_di_align=True),
+)
+PROFILE_TREND_ADX_US = StrategyProfile(
+    name="trend-adx-us",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=US_PEAK,
+    reward_risk=2.0,
+    signal="breakout",
+    extra=ExtraFilters(adx_min=25.0, require_di_align=True),
+)
+PROFILE_RANGE_ADX = StrategyProfile(
+    name="range-adx",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=2.0,
+    signal="rsi",
+    extra=ExtraFilters(adx_max=20.0),
+)
+PROFILE_BREAKOUT_VOLHALT = StrategyProfile(
+    name="breakout-volhalt",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=None,
+    signal="breakout",
+    trail_atr=1.5,
+    extra=ExtraFilters(vol_halt=True),
+)
+
 PROFILES = {
     "default": StrategyProfile("default", "1h", "4h", None, None, 1.5),
     "us-session": PROFILE_US_SESSION,
@@ -252,6 +320,13 @@ PROFILES = {
     "breakout-us-trail": PROFILE_BREAKOUT_US_TRAIL,
     "breakout-2h": PROFILE_BREAKOUT_2H,
     "pullback": PROFILE_PULLBACK,
+    "regime": PROFILE_REGIME,
+    "regime-us": PROFILE_REGIME_US,
+    "regime-2h": PROFILE_REGIME_2H,
+    "trend-adx": PROFILE_TREND_ADX,
+    "trend-adx-us": PROFILE_TREND_ADX_US,
+    "range-adx": PROFILE_RANGE_ADX,
+    "breakout-volhalt": PROFILE_BREAKOUT_VOLHALT,
 }
 
 

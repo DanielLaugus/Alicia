@@ -26,7 +26,17 @@ from alicia.session import (
     SessionWindow,
     parse_hhmm,
 )
-from alicia.strategy import DONCHIAN_N, ExtraFilters, SIGNALS, STOP_ATR_MULT, STOP_MODES, TP_ATR_MULT
+from alicia.strategy import (
+    ADX_SPLIT_DEFAULT,
+    DONCHIAN_N,
+    ExtraFilters,
+    SIDES,
+    SIGNALS,
+    STOP_ATR_MULT,
+    STOP_MODES,
+    TP_ATR_MULT,
+)
+from dataclasses import replace
 from alicia.orderbook import (
     fetch_public_order_book_with_fallback,
     load_book_json,
@@ -190,6 +200,69 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=list(STOP_MODES),
         help="Initial stop: atr (product 1.5×ATR) or bar-low (breakout-bar low if below fill)",
+    )
+    bt.add_argument(
+        "--adx-min",
+        type=float,
+        default=None,
+        help="Experiment: require ADX >= this (trend regime)",
+    )
+    bt.add_argument(
+        "--adx-max",
+        type=float,
+        default=None,
+        help="Experiment: require ADX <= this (range regime)",
+    )
+    bt.add_argument(
+        "--adx-split",
+        type=float,
+        default=None,
+        help=f"ADX split for --signal regime (default {ADX_SPLIT_DEFAULT:g})",
+    )
+    bt.add_argument(
+        "--di-align",
+        action="store_true",
+        help="Experiment: require +DI > −DI for longs (−DI > +DI for shorts)",
+    )
+    bt.add_argument(
+        "--vol-halt",
+        action="store_true",
+        help="Experiment: skip entries when ATR%% is at/above its 200-bar 90th percentile",
+    )
+    bt.add_argument(
+        "--vol-target",
+        type=float,
+        default=None,
+        help="Experiment: scale qty by min(1, target / ATR%%) (e.g. 0.02)",
+    )
+    bt.add_argument(
+        "--side",
+        default=None,
+        choices=list(SIDES),
+        help="long (product/spot), short, or both. short/both are futures-like research only.",
+    )
+    bt.add_argument(
+        "--fee-bps",
+        type=float,
+        default=None,
+        help="Override FEE_BPS for this run (e.g. 3 for a maker sensitivity check)",
+    )
+    bt.add_argument(
+        "--slip-bps",
+        type=float,
+        default=None,
+        help="Override SLIPPAGE_BPS for this run",
+    )
+    bt.add_argument(
+        "--funding-csv",
+        default=None,
+        help="Optional funding-rate CSV (timestamp,rate) used as a no-lookahead filter",
+    )
+    bt.add_argument(
+        "--funding-max",
+        type=float,
+        default=None,
+        help="Skip new longs when last completed funding exceeds this (e.g. 0.0001)",
     )
 
     dry = sub.add_parser(
@@ -454,6 +527,21 @@ def main(argv: list[str] | None = None) -> int:
             rsi_from=getattr(args, "rsi_from", None)
             if getattr(args, "rsi_from", None) is not None
             else spec.extra.rsi_from,
+            adx_min=getattr(args, "adx_min", None)
+            if getattr(args, "adx_min", None) is not None
+            else spec.extra.adx_min,
+            adx_max=getattr(args, "adx_max", None)
+            if getattr(args, "adx_max", None) is not None
+            else spec.extra.adx_max,
+            adx_split=getattr(args, "adx_split", None)
+            if getattr(args, "adx_split", None) is not None
+            else spec.extra.adx_split,
+            require_di_align=bool(getattr(args, "di_align", False)) or spec.extra.require_di_align,
+            vol_halt=bool(getattr(args, "vol_halt", False)) or spec.extra.vol_halt,
+            funding_max=getattr(args, "funding_max", None)
+            if getattr(args, "funding_max", None) is not None
+            else spec.extra.funding_max,
+            funding_min=spec.extra.funding_min,
         )
         breakeven_r = getattr(args, "breakeven_r", None)
         if breakeven_r is None:
@@ -470,6 +558,25 @@ def main(argv: list[str] | None = None) -> int:
             else spec.trail_atr
         )
         stop_mode = getattr(args, "stop_mode", None) or spec.stop_mode or "atr"
+        trade_side = getattr(args, "side", None) or spec.side or "long"
+        vol_target = (
+            float(args.vol_target)
+            if getattr(args, "vol_target", None) is not None
+            else spec.vol_target
+        )
+        if getattr(args, "fee_bps", None) is not None:
+            settings = replace(settings, fee_bps=float(args.fee_bps))
+        if getattr(args, "slip_bps", None) is not None:
+            settings = replace(settings, slippage_bps=float(args.slip_bps))
+        funding_series = None
+        if getattr(args, "funding_csv", None):
+            fund_df = pd.read_csv(args.funding_csv)
+            ts_col = "timestamp" if "timestamp" in fund_df.columns else fund_df.columns[0]
+            rate_col = "rate" if "rate" in fund_df.columns else fund_df.columns[1]
+            funding_series = pd.Series(
+                fund_df[rate_col].astype("float64").values,
+                index=pd.to_datetime(fund_df[ts_col], utc=True),
+            )
         extras_on = (
             extra.require_ema_slope
             or extra.require_ema50
@@ -479,6 +586,13 @@ def main(argv: list[str] | None = None) -> int:
             or signal != "rsi"
             or trail_atr is not None
             or stop_mode != "atr"
+            or extra.adx_min is not None
+            or extra.adx_max is not None
+            or extra.require_di_align
+            or extra.vol_halt
+            or vol_target is not None
+            or trade_side != "long"
+            or getattr(args, "fee_bps", None) is not None
         )
         if entry_tf == "1m":
             print(
@@ -511,6 +625,20 @@ def main(argv: list[str] | None = None) -> int:
                 bits.append(f"trail {trail_atr:g}×ATR")
             if stop_mode != "atr":
                 bits.append(f"stop-mode {stop_mode}")
+            if extra.adx_min is not None:
+                bits.append(f"ADX>={extra.adx_min:g}")
+            if extra.adx_max is not None:
+                bits.append(f"ADX<={extra.adx_max:g}")
+            if extra.require_di_align:
+                bits.append("DI-align")
+            if extra.vol_halt:
+                bits.append("vol-halt")
+            if vol_target is not None:
+                bits.append(f"vol-target {vol_target:g}")
+            if trade_side != "long":
+                bits.append(f"side {trade_side}")
+            if getattr(args, "fee_bps", None) is not None:
+                bits.append(f"fee {settings.fee_bps:g}bps")
             exits = (
                 f"stop {stop_atr:g}×ATR / trail {trail_atr:g}×ATR (no fixed TP)"
                 if trail_atr is not None
@@ -544,6 +672,9 @@ def main(argv: list[str] | None = None) -> int:
             donchian_n=donchian_n,
             trail_atr=trail_atr,
             stop_mode=stop_mode,
+            side=trade_side,
+            vol_target=vol_target,
+            funding=funding_series,
         )
         print(format_report(result))
         return 0

@@ -65,6 +65,32 @@ def donchian_prior_high(high: pd.Series, period: int = 20) -> pd.Series:
     return high.astype("float64").rolling(window=period, min_periods=period).max().shift(1)
 
 
+def donchian_prior_low(low: pd.Series, period: int = 20) -> pd.Series:
+    """Prior N-bar low: rolling min of low, shifted 1 so the current bar is excluded."""
+    if period < 1:
+        raise ValueError("Donchian period must be >= 1")
+    return low.astype("float64").rolling(window=period, min_periods=period).min().shift(1)
+
+
+def adx(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = 14,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Wilder ADX / +DI / −DI. First ~2×period bars are NaN (warmup)."""
+    up = high.astype("float64").diff()
+    down = -low.astype("float64").diff()
+    plus_dm = up.where((up > down) & (up > 0.0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0.0), 0.0)
+    atr_v = atr(high, low, close, period)
+    plus_di = 100.0 * wilder_smooth(plus_dm, period) / atr_v.replace(0.0, np.nan)
+    minus_di = 100.0 * wilder_smooth(minus_dm, period) / atr_v.replace(0.0, np.nan)
+    denom = (plus_di + minus_di).replace(0.0, np.nan)
+    dx = 100.0 * (plus_di - minus_di).abs() / denom
+    return wilder_smooth(dx, period), plus_di, minus_di
+
+
 PANDAS_RULES = {
     "1m": "1min",
     "5m": "5min",
@@ -153,6 +179,13 @@ def attach_indicators(
     frame["ema50"] = ema(frame["close"], 50)
     frame["close_prev"] = frame["close"].shift(1)
     frame["donchian_high"] = donchian_prior_high(frame["high"], donchian_n)
+    frame["donchian_low"] = donchian_prior_low(frame["low"], donchian_n)
+    adx_v, plus_di, minus_di = adx(frame["high"], frame["low"], frame["close"], 14)
+    frame["adx_14"] = adx_v
+    frame["plus_di"] = plus_di
+    frame["minus_di"] = minus_di
+    frame["atr_pct_q90"] = frame["atr_pct"].rolling(window=200, min_periods=50).quantile(0.90)
+    frame["atr_pct_med"] = frame["atr_pct"].rolling(window=200, min_periods=50).median()
 
     trend = resample_ohlcv(frame[["open", "high", "low", "close", "volume"]], trend_timeframe)
     trend["ema200_4h"] = ema(trend["close"], 200)

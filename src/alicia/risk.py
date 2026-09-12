@@ -21,15 +21,20 @@ def position_qty(
     max_small_notional_eur: float,
     usdt_eur_rate: float = 1.0,
     available_quote: float | None = None,
+    side: str = "long",
 ) -> float:
-    """BTC quantity for a long.
+    """BTC quantity for a long (or a futures-like short when ``side='short'``).
 
     Risk-to-stop uses 1–3% of capital. Notionals up to €200 are allowed on the
     small-book path; larger notionals exist only when derived from stop distance.
     """
     if entry_price <= 0:
         return 0.0
-    stop_distance = entry_price - stop
+    side = (side or "long").strip().lower()
+    if side == "short":
+        stop_distance = stop - entry_price
+    else:
+        stop_distance = entry_price - stop
     if stop_distance <= 0:
         return 0.0
 
@@ -56,6 +61,7 @@ def size_from_settings(
     stop: float,
     capital_eur: float | None = None,
     available_quote: float | None = None,
+    side: str = "long",
 ) -> float:
     return position_qty(
         capital_eur=settings.capital_eur if capital_eur is None else capital_eur,
@@ -65,6 +71,7 @@ def size_from_settings(
         max_small_notional_eur=settings.max_small_notional_eur,
         usdt_eur_rate=settings.usdt_eur_rate,
         available_quote=available_quote,
+        side=side,
     )
 
 
