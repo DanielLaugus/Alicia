@@ -10,6 +10,14 @@ python -m alicia backtest
 
 Unit tests mock the exchange and do **not** perform this download.
 
+## Order-book filters are not in this backtest
+
+Alicia’s paper/live path requires L2 **spread, imbalance, and depth** (see `docs/SPEC.md` → Orderbuch-Filter). **This file’s numbers do not include those gates.**
+
+Public candle history has no matching historical order book. We do **not** invent fake L2 for 17k hours. The engine skips OB filters in `python -m alicia backtest` / `dry-run` and keeps fixed `SLIPPAGE_BPS`. Paper can fetch a **live** public book (`python -m alicia book` / `paper`) and may quote half-spread as extra slip vs mid — that is a now-cast, not a replay.
+
+Treat the table below as **OHLCV + fees + fixed slippage only**. Live/paper trade counts will be lower once the book gate blocks wide/thin/ask-heavy snapshots.
+
 ## Latest run
 
 | Item | Value |

@@ -289,6 +289,7 @@ def format_report(result: BacktestResult) -> str:
         f"  closed PnL:    {s['pnl_usdt']:.2f} USDT (fees+slippage included)",
         f"  fees:          {s['fees_usdt']:.2f} USDT",
         f"  slippage:      {s['slippage_usdt']:.2f} USDT",
+        "  order book:    skipped — no historical L2 (paper/live apply spread/imbalance/depth)",
     ]
     if s["fees_slippage_impact_usdt"] is not None:
         lines.append(

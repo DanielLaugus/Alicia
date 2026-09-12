@@ -19,6 +19,10 @@ from alicia.data import (
     read_cache,
     resolve_cached_1h,
 )
+from alicia.orderbook import (
+    fetch_public_order_book_with_fallback,
+    load_book_json,
+)
 from alicia.paper import evaluate_latest, load_paper_ohlcv
 from alicia.safety import FORBIDDEN_ACTIONS
 
@@ -78,10 +82,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Prove signal/risk logic on synthetic data (no exchange keys)",
     )
     dry.add_argument("--csv", default=None)
+    dry.add_argument(
+        "--book",
+        default=None,
+        help="Optional L2 JSON fixture to demonstrate order-book filters (not used as history)",
+    )
 
     paper = sub.add_parser(
         "paper",
-        help="Evaluate the latest signal (cache, CSV, or public OHLCV). Does not place orders.",
+        help="Evaluate the latest signal + public L2 book. Does not place orders.",
     )
     paper.add_argument("--csv", default=None)
     paper.add_argument(
@@ -90,8 +99,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Fetch the latest public 1h candles via ccxt (no API key). Requires ccxt",
     )
     paper.add_argument("--cache-dir", default=None)
+    paper.add_argument("--book", default=None, help="L2 JSON snapshot instead of a live fetch")
+    paper.add_argument(
+        "--no-book",
+        action="store_true",
+        help="Skip the L2 fetch (fails closed if ORDERBOOK_REQUIRE=true)",
+    )
 
-    sub.add_parser("rules", help="Print the five strategy rules")
+    book = sub.add_parser(
+        "book",
+        help="Fetch or load a public L2 snapshot and print spread/imbalance/depth (no orders)",
+    )
+    book.add_argument("--json", dest="book_json", default=None, help="Load a recorded L2 fixture")
+    book.add_argument("--exchange", default=None)
+    book.add_argument("--symbol", default=None)
+
+    sub.add_parser("rules", help="Print the candle rules and order-book filters")
     return parser
 
 
@@ -104,6 +127,8 @@ Alicia rules (see docs/SPEC.md)
   3. Stop = entry − 1.5×ATR(14,1h). Take-profit = entry + 2×ATR(14,1h). No averaging down.
   4. Size from 1–3% of capital to the stop. Notionals up to €200 allowed; above that, risk-to-stop only. Max one position.
   5. Kill-switch: halt on −10% monthly drawdown; pause on CPI/Fed/NFP days; pause on API/latency errors.
+  6. Order book (paper/live, not historical backtest): spread ≤ max bps; top-N imbalance ≥ min;
+     bid depth within N bps of mid ≥ min size. Fail closed if the book is missing when required.
 
   API safety: read + trade only. This CLI has no withdrawal/transfer commands.
   Forbidden actions: {forbidden}
@@ -225,7 +250,22 @@ def main(argv: list[str] | None = None) -> int:
                 "Unit tests still cover each rule in isolation."
             )
         print("\nDry-run complete. Exchange API keys were not used.")
+        if args.book:
+            from alicia.orderbook import evaluate_book_from_settings, load_book_json
+
+            snap = load_book_json(args.book)
+            book = evaluate_book_from_settings(snap, settings)
+            print("\nOrder-book fixture (not historical — one recorded snapshot):")
+            print(f"  {'PASS' if book.ok else 'BLOCK'}  {book.reason}")
+        else:
+            print(
+                "Order-book filters were not applied to the candle backtest "
+                "(no historical L2). Use --book FILE to demo the live gate."
+            )
         return 0
+
+    if args.command == "book":
+        return _run_book_command(args, settings)
 
     if args.command == "paper":
         if settings.mode == "live":
@@ -249,7 +289,24 @@ def main(argv: list[str] | None = None) -> int:
                 ohlcv = read_cache(path)
             else:
                 ohlcv = load_paper_ohlcv(settings)
-        snap = evaluate_latest(ohlcv, settings)
+        book = None
+        book_venue = None
+        if args.book:
+            book = load_book_json(args.book)
+            book_venue = f"fixture:{args.book}"
+        elif not args.no_book and settings.orderbook_enabled:
+            try:
+                book, used = fetch_public_order_book_with_fallback(
+                    settings.orderbook_venue,
+                    settings.symbol,
+                    limit=settings.orderbook_limit,
+                )
+                book_venue = used
+            except Exception as exc:
+                print(f"Public L2 fetch failed: {exc}", file=sys.stderr)
+                book = None
+                book_venue = None
+        snap = evaluate_latest(ohlcv, settings, book=book, book_venue=book_venue)
         print("Alicia paper snapshot (no order sent)")
         print(f"  time:       {snap.timestamp}")
         print(f"  price:      {snap.price:.2f}")
@@ -258,12 +315,74 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  volume:     {snap.volume:.2f} vs MA20 {snap.volume_ma}")
         print(f"  ATR 14:     {snap.atr}")
         print(f"  stop/tp:    {snap.stop} / {snap.take_profit}")
+        _print_book_section(snap)
         print(f"  decision:   {'ENTER LONG' if snap.decision.enter else 'NO ENTRY'}")
         print(f"  reason:     {snap.decision.reason}")
         return 0
 
     parser.error(f"unknown command {args.command}")
     return 2
+
+
+def _print_book_section(snap) -> None:
+    print(f"  book venue:  {snap.book_venue}")
+    if snap.book is None:
+        print("  book:        (disabled)")
+        return
+    metrics = snap.book.metrics
+    if metrics is None:
+        print(f"  book:        {snap.book.reason}")
+        return
+    print(
+        f"  book:        bid {metrics.best_bid:.2f} / ask {metrics.best_ask:.2f} "
+        f"mid {metrics.mid:.2f}"
+    )
+    print(
+        f"  spread:      {metrics.spread_bps:.2f} bps  "
+        f"(half-spread slip est. {metrics.half_spread_bps:.2f} bps; "
+        f"backtest still uses SLIPPAGE_BPS)"
+    )
+    print(
+        f"  imbalance:   {metrics.imbalance:.3f}  "
+        f"(bid top {metrics.bid_volume_top:.4f} / ask top {metrics.ask_depth_top:.4f})"
+    )
+    print(f"  bid depth:   {metrics.bid_depth:.4f}")
+    print(f"  book gate:   {'PASS' if snap.book.ok else 'BLOCK'}  {snap.book.reason}")
+
+
+def _run_book_command(args, settings) -> int:
+    from alicia.orderbook import evaluate_book_from_settings
+
+    try:
+        if args.book_json:
+            snap = load_book_json(args.book_json)
+            venue = f"fixture:{args.book_json}"
+        else:
+            exchange = args.exchange or settings.orderbook_venue
+            symbol = args.symbol or settings.symbol
+            snap, venue = fetch_public_order_book_with_fallback(
+                exchange,
+                symbol,
+                limit=settings.orderbook_limit,
+            )
+    except Exception as exc:
+        print(f"Order book unavailable: {exc}", file=sys.stderr)
+        if settings.orderbook_require:
+            print("Fail closed: no new LONG while L2 is missing.", file=sys.stderr)
+        return 1
+    decision = evaluate_book_from_settings(snap, settings)
+    print(f"Alicia L2 snapshot — {venue} {settings.symbol} (no order sent)")
+    if decision.metrics:
+        m = decision.metrics
+        print(f"  bid/ask/mid: {m.best_bid:.2f} / {m.best_ask:.2f} / {m.mid:.2f}")
+        print(f"  spread:      {m.spread_bps:.2f} bps")
+        print(f"  imbalance:   {m.imbalance:.3f} (top {settings.orderbook_levels})")
+        print(
+            f"  bid depth:   {m.bid_depth:.4f} within {settings.orderbook_depth_bps:g} bps of mid"
+        )
+        print(f"  half-spread: {m.half_spread_bps:.2f} bps estimated extra slip vs mid")
+    print(f"  gate:        {'PASS' if decision.ok else 'BLOCK'}  {decision.reason}")
+    return 0 if decision.ok or not settings.orderbook_require else 2
 
 
 if __name__ == "__main__":

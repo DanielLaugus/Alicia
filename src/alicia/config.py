@@ -59,6 +59,16 @@ class Settings:
     api_key: str
     api_secret: str
     api_latency_ms_limit: int
+    orderbook_enabled: bool
+    orderbook_require: bool
+    orderbook_in_backtest: bool
+    orderbook_max_spread_bps: float
+    orderbook_levels: int
+    orderbook_imbalance_min: float
+    orderbook_min_bid_depth: float
+    orderbook_depth_bps: float
+    orderbook_limit: int
+    orderbook_exchange: str
 
     @property
     def risk_pct_clamped(self) -> float:
@@ -74,6 +84,10 @@ class Settings:
 
     def notional_eur(self, quote_notional_usdt: float) -> float:
         return quote_notional_usdt * self.usdt_eur_rate
+
+    @property
+    def orderbook_venue(self) -> str:
+        return self.orderbook_exchange or self.exchange_id
 
 
 def load_settings(env_file: str | Path | None = ".env") -> Settings:
@@ -104,4 +118,14 @@ def load_settings(env_file: str | Path | None = ".env") -> Settings:
         api_key=os.getenv("EXCHANGE_API_KEY", "").strip(),
         api_secret=os.getenv("EXCHANGE_API_SECRET", "").strip(),
         api_latency_ms_limit=_as_int("API_LATENCY_MS_LIMIT", 5000),
+        orderbook_enabled=_as_bool("ORDERBOOK_ENABLED", True),
+        orderbook_require=_as_bool("ORDERBOOK_REQUIRE", True),
+        orderbook_in_backtest=_as_bool("ORDERBOOK_IN_BACKTEST", False),
+        orderbook_max_spread_bps=_as_float("ORDERBOOK_MAX_SPREAD_BPS", 5.0),
+        orderbook_levels=_as_int("ORDERBOOK_LEVELS", 10),
+        orderbook_imbalance_min=_as_float("ORDERBOOK_IMBALANCE_MIN", 0.0),
+        orderbook_min_bid_depth=_as_float("ORDERBOOK_MIN_BID_DEPTH", 1.0),
+        orderbook_depth_bps=_as_float("ORDERBOOK_DEPTH_BPS", 10.0),
+        orderbook_limit=_as_int("ORDERBOOK_LIMIT", 20),
+        orderbook_exchange=os.getenv("ORDERBOOK_EXCHANGE", "").strip(),
     )

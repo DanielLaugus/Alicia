@@ -10,7 +10,7 @@ Source of truth for the BTC/USDT spot bot. Implementation and tests must follow 
 | Direction | LONG only (no shorts) |
 | Entry timeframe | 1h |
 | Trend timeframe | 4h |
-| Indicators | EMA200(4h), RSI(14) 1h, volume vs MA20 1h, ATR(14) 1h |
+| Indicators | EMA200(4h), RSI(14) 1h, volume vs MA20 1h, ATR(14) 1h, plus live L2 book filters |
 
 ## Rule 1 — Trend filter
 
@@ -63,6 +63,45 @@ Halt or pause **new entries** when any of the following trip:
 3. **API / latency errors** — any exchange exception or request slower than `API_LATENCY_MS_LIMIT` pauses the bot.
 
 Open positions are not increased while paused; they still manage stop / take-profit until flat. After a monthly-drawdown halt, the bot stays halted until the next UTC month (backtest) or until the operator resets (paper/live).
+
+## Orderbuch-Filter (additional entry gate)
+
+OHLCV-only is **not** enough for paper or live entries. Before a new LONG, when order-book filters are enabled, **all three** L2 checks must pass. The five candle rules above stay unchanged; this layer only **blocks**.
+
+Public depth is read with ccxt `fetch_order_book` (**no API key**). Practical default venue: **OKX** spot `BTC/USDT` (same public venue as the recorded OHLCV backtest). `ORDERBOOK_EXCHANGE` overrides; if that venue is geo-blocked, the client tries OKX / KuCoin / Gate.
+
+### OB-1 — Spread
+
+- `mid = (best_bid + best_ask) / 2`
+- `spread_bps = (best_ask − best_bid) / mid × 10_000`
+- Enter only if `spread_bps ≤ ORDERBOOK_MAX_SPREAD_BPS` (default **5**).
+
+### OB-2 — Imbalance (top N)
+
+- Top **N** levels (default `ORDERBOOK_LEVELS=10`), best first.
+- `imbalance = (bid_vol − ask_vol) / (bid_vol + ask_vol)` in `[-1, +1]`
+- Enter long only if `imbalance ≥ ORDERBOOK_IMBALANCE_MIN` (default **0** = bid-heavy or balanced, **not ask-heavy**).
+
+### OB-3 — Bid depth near mid
+
+- Sum **bid-side base size** (BTC) with `price ≥ mid × (1 − ORDERBOOK_DEPTH_BPS / 10_000)`
+- Default band: **10 bps** from mid.
+- Enter only if that size ≥ `ORDERBOOK_MIN_BID_DEPTH` (default **1.0 BTC**).
+
+### Fail closed
+
+If `ORDERBOOK_REQUIRE=true` (default for paper/live):
+
+- missing book, empty book, crossed book, or fetch error → **no new entry**
+- never invent a synthetic book to “pass” the gate
+
+### Backtest honesty
+
+Historical L2 is **not** available from the public REST history used for candles. The backtest **does not invent** order books.
+
+- Default: `ORDERBOOK_IN_BACKTEST=false` — candle rules + fixed `SLIPPAGE_BPS` only. Reports must say the OB gate was skipped.
+- Recorded JSON snapshots are for **unit tests and paper demos only**, not as a time series.
+- Paper may report **half-spread** as estimated extra slippage vs mid at that instant. The historical backtest still uses configured `SLIPPAGE_BPS` until real L2 history is supplied later.
 
 ## API safety (mandatory)
 

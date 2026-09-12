@@ -129,6 +129,24 @@ def test_cli_dry_run_without_keys(capsys):
     assert code == 0
     assert "keys were not used" in captured.out.lower() or "Dry-run complete" in captured.out
     assert "EXCHANGE_API" not in captured.out
+    assert "order-book filters were not applied" in captured.out.lower()
+    assert "order book:    skipped" in captured.out
+
+
+def test_cli_dry_run_book_fixture(capsys):
+    code = main(["dry-run", "--book", "tests/fixtures/orderbook_pass.json"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "PASS" in captured.out
+    assert "not historical" in captured.out
+
+
+def test_cli_book_fixture_offline(capsys):
+    code = main(["book", "--json", "tests/fixtures/orderbook_pass.json"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "gate:" in captured.out
+    assert "PASS" in captured.out
 
 
 def test_cli_backtest_without_cache_exits_cleanly(tmp_path, capsys, monkeypatch):

@@ -15,8 +15,9 @@ Market: **BTC/USDT spot** · Entry TF: **1h** · Trend TF: **4h** · **LONG only
 3. **Stop & target.** Stop = 1.5 × ATR(14, 1h) below entry. Take-profit = 2 × ATR(14, 1h) above entry. **No averaging down.**
 4. **Position sizing.** Notional positions up to **€200** are allowed. Above that, size so that a stop loss risks **1–3% of bot capital** (quantity derived from stop distance). **Max one open position.**
 5. **Kill-switch.** Halt / pause on **−10% monthly drawdown**; pause on **CPI / Fed / NFP** days (flags + JSON calendar); pause on **API / latency** errors.
+6. **Order book (paper/live).** New LONG also needs a public L2 snapshot: spread ≤ max bps, top-N imbalance not ask-heavy, and enough bid depth near mid. Missing book → no entry when required. **Not applied to historical backtests** (no real L2 history).
 
-Indicators: EMA200(4h), RSI(14) 1h, volume vs MA20, ATR(14) 1h.
+Indicators: EMA200(4h), RSI(14) 1h, volume vs MA20, ATR(14) 1h, plus live L2 spread / imbalance / depth.
 
 ## Setup
 
@@ -66,9 +67,22 @@ python -m alicia backtest --csv path/to/btcusdt_1h.csv
 python -m alicia backtest --synthetic                  # built-in demo series
 ```
 
-A recorded run on downloaded Binance history is in [`docs/BACKTEST.md`](docs/BACKTEST.md). Re-run the two commands above to refresh those numbers.
+A recorded OHLCV run is in [`docs/BACKTEST.md`](docs/BACKTEST.md). That run **skips order-book filters** — see below.
 
 **CI / unit tests never hit the network.** Live `download` + `backtest` is a manual/integration step.
+
+## Order book vs backtest
+
+Paper and a future live loop **must** read a public L2 book (`fetch_order_book`, no API key). Default venue is `ORDERBOOK_EXCHANGE` (example: **okx**, same as the recorded candle download). Filters are in [`docs/SPEC.md`](docs/SPEC.md) under **Orderbuch-Filter**.
+
+Historical candle CSVs do **not** include order books. Alicia **does not invent** L2 for 1h history. `backtest` / `dry-run` print that the OB gate was skipped and keep using fixed `SLIPPAGE_BPS`. Paper may show **half-spread** as estimated extra slip vs mid at that instant only.
+
+```bash
+python -m alicia book --json tests/fixtures/orderbook_pass.json   # offline
+python -m alicia book                                            # live public L2
+python -m alicia paper --book tests/fixtures/orderbook_pass.json
+python -m alicia dry-run --book tests/fixtures/orderbook_pass.json
+```
 
 ## Synthetic dry-run
 
@@ -90,9 +104,10 @@ python -m alicia rules
 Paper mode **evaluates the latest closed-bar signal only**. It does not place orders.
 
 ```bash
-python -m alicia paper              # cached 1h if present, else synthetic
-python -m alicia paper --public     # latest public 1h candles via ccxt (no key)
-python -m alicia paper --csv path/to/btcusdt_1h.csv
+python -m alicia paper              # cached 1h + live public L2 (no key)
+python -m alicia paper --public     # latest public 1h candles + L2
+python -m alicia paper --book tests/fixtures/orderbook_pass.json
+python -m alicia paper --no-book    # fail closed if ORDERBOOK_REQUIRE=true
 ```
 
 A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing / kill-switch → spot buy/sell only. That path is not enabled by this CLI.
@@ -122,14 +137,24 @@ A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing 
 | `DATA_CACHE_DIR` | `data/cache` | Public OHLCV cache (gitignored) |
 | `ALICIA_MODE` | `backtest` | `backtest` \| `paper` \| `live` |
 | `API_LATENCY_MS_LIMIT` | `5000` | Latency pause threshold |
+| `ORDERBOOK_ENABLED` | `true` | Apply L2 gate on paper/live |
+| `ORDERBOOK_REQUIRE` | `true` | Fail closed if the book is missing |
+| `ORDERBOOK_IN_BACKTEST` | `false` | Do not invent historical books |
+| `ORDERBOOK_MAX_SPREAD_BPS` | `5` | Max (ask−bid)/mid |
+| `ORDERBOOK_LEVELS` | `10` | Top-N for imbalance |
+| `ORDERBOOK_IMBALANCE_MIN` | `0` | `(bid−ask)/(bid+ask)` floor (0 = not ask-heavy) |
+| `ORDERBOOK_MIN_BID_DEPTH` | `1` | Min bid BTC within the depth band |
+| `ORDERBOOK_DEPTH_BPS` | `10` | Band around mid for the depth sum |
+| `ORDERBOOK_LIMIT` | `20` | `fetch_order_book` depth |
+| `ORDERBOOK_EXCHANGE` | `okx` | Public L2 venue (no key) |
 
 ## Layout
 
 ```
 docs/SPEC.md          # strategy source of truth
 docs/BACKTEST.md      # last real-data backtest numbers
-src/alicia/           # strategy, risk, calendar, backtest, download
-tests/                # unit tests (offline; mocked fetch)
+src/alicia/           # strategy, risk, order book, calendar, backtest
+tests/                # unit tests (offline; mocked fetch + L2 fixtures)
 data/events.example.json
 data/cache/           # gitignored public OHLCV after `download`
 .env.example

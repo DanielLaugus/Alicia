@@ -29,6 +29,16 @@ def settings() -> Settings:
         api_key="",
         api_secret="",
         api_latency_ms_limit=5000,
+        orderbook_enabled=False,
+        orderbook_require=False,
+        orderbook_in_backtest=False,
+        orderbook_max_spread_bps=5.0,
+        orderbook_levels=10,
+        orderbook_imbalance_min=0.0,
+        orderbook_min_bid_depth=1.0,
+        orderbook_depth_bps=10.0,
+        orderbook_limit=20,
+        orderbook_exchange="",
     )
 
 
