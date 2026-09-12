@@ -124,18 +124,40 @@ Print the five rules:
 python -m alicia rules
 ```
 
-## Paper path
+## Official paper profile — ETH/USDT `regime-20`
 
-Paper mode **evaluates the latest closed-bar signal only**. It does not place orders.
+**Locked paper bundle** (signal evaluation only). Does **not** change the BTC 1h/4h RSI default for `python -m alicia backtest` without flags. Live trading is **not** enabled.
+
+| Item | Value |
+| --- | --- |
+| Symbol | **ETH/USDT** |
+| Profile | **`paper-eth`** (alias of `regime-20`) |
+| Rules | ADX(14) ≥ 20 → Donchian-20 + 12h EMA200; else RSI bounce. 4h entry, RR 1:2 |
+| Backtest costs | 10 bps fee / 5 bps slip (historical). Paper also applies the live L2 gate |
+| Mode | **Paper only** — latest closed bar + order book. No orders. No withdrawals |
+
+Caveats (do not skip): the same rules **lose on BTC** (−15.85%). ETH OOS is thin (+0.52%, 16 trades). See `docs/BACKTEST.md` § Potential search.
+
+### How to paper trade ETH regime-20
 
 ```bash
-python -m alicia paper              # cached 1h + live public L2 (no key)
-python -m alicia paper --public     # latest public 1h candles + L2
-python -m alicia paper --book tests/fixtures/orderbook_pass.json
-python -m alicia paper --no-book    # fail closed if ORDERBOOK_REQUIRE=true
+# 1. Public ETH 4h history (no API key)
+python -m alicia download --exchange okx --symbol ETH/USDT --timeframe 4h --years 2
+
+# 2. Recommended paper command (official profile + public L2, no order)
+python -m alicia paper --profile paper-eth
 ```
 
-A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing / kill-switch → spot buy/sell only. That path is not enabled by this CLI.
+Equivalents: `python -m alicia paper` (uses `PAPER_PROFILE` / `PAPER_SYMBOL` from `.env`) or `python -m alicia paper --profile regime-20 --symbol ETH/USDT`.
+
+```bash
+python -m alicia paper --profile paper-eth --public   # latest public 4h + L2
+python -m alicia paper --profile paper-eth --book tests/fixtures/orderbook_pass.json
+python -m alicia paper --profile paper-eth --no-book  # fail closed if ORDERBOOK_REQUIRE=true
+python -m alicia backtest --symbol ETH/USDT --profile regime-20   # research replay only
+```
+
+Paper **evaluates the latest closed-bar signal only**. It does not place orders. A future live loop is not enabled by this CLI.
 
 ## Safety notes
 
@@ -158,7 +180,9 @@ A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing 
 | `MONTHLY_DD_HALT` | `0.10` | Monthly drawdown kill-switch |
 | `PAUSE_CPI` / `PAUSE_FED` / `PAUSE_NFP` | `true` | Event-day pauses |
 | `EVENTS_PATH` | `data/events.example.json` | Extra calendar dates |
-| `SYMBOL` / `EXCHANGE` | `BTC/USDT` / `binance` | Market (spot) |
+| `SYMBOL` / `EXCHANGE` | `BTC/USDT` / `binance` | Market for **backtest** default (spot) |
+| `PAPER_PROFILE` | `paper-eth` | Official paper command profile |
+| `PAPER_SYMBOL` | `ETH/USDT` | Official paper symbol (does not change BTC backtest) |
 | `DATA_CACHE_DIR` | `data/cache` | Public OHLCV cache (gitignored) |
 | `ALICIA_MODE` | `backtest` | `backtest` \| `paper` \| `live` |
 | `API_LATENCY_MS_LIMIT` | `5000` | Latency pause threshold |

@@ -437,12 +437,23 @@ python -m alicia backtest --symbol ETH/USDT --profile regime-20
 
 Meets: (1) +11.47% > +5% at 10/5; (2) train and mid-sample OOS both ≥ 0; (3) 44 full-sample trades; (4) honest costs, no L2 invention.
 
+**Locked as the official paper profile** (`paper-eth` / `regime-20` on ETH/USDT). Paper evaluates the latest closed bar + L2 gate only. **No live orders.** BTC `backtest` without flags stays product RSI.
+
 **Caveats (do not skip):**
 
 - This is **ETH**, not BTC. The same `regime-20` bundle on BTC 4h is **−15.85%** (57 trades). Do not port it blindly.
 - OOS is **thin**: 16 trades, **+0.52%**. Alternate splits are not stable: 2025-06-01 train −3.66% / OOS +15.7%; 2025-12-01 train +20.2% / OOS **−7.27%**. The pre-declared mid split passes; other cuts do not.
 - ADX 20 vs 25 vs 30 was a one-parameter A/B. Split 25 on ETH is +22.7% full but OOS **−3.0%** (fails rule 2). Split 20 is the one that cleared OOS.
-- DD −16% is not pretty. The run also tripped the **−10% monthly kill-switch** twice. Not live-money advice. Curiosity profile only — **do not replace the BTC RSI product default.**
+- DD −16% is not pretty. The run also tripped the **−10% monthly kill-switch** twice. Not live-money advice. **Do not replace the BTC RSI product default.**
+
+### How to paper trade ETH regime-20
+
+```bash
+python -m alicia download --exchange okx --symbol ETH/USDT --timeframe 4h --years 2
+python -m alicia paper --profile paper-eth
+```
+
+`paper-eth` pins ETH/USDT + `regime-20`. Env defaults (`PAPER_PROFILE=paper-eth`, `PAPER_SYMBOL=ETH/USDT`) make `python -m alicia paper` do the same. Replay the historical sample with `python -m alicia backtest --symbol ETH/USDT --profile regime-20` (still not live). Order-book filters apply on paper and **fail closed** when `ORDERBOOK_REQUIRE=true` and L2 is missing. They stay skipped in historical backtest (no real L2 history).
 
 ### Agenda log (honest failures)
 

@@ -69,6 +69,8 @@ class Settings:
     orderbook_depth_bps: float
     orderbook_limit: int
     orderbook_exchange: str
+    paper_profile: str = "paper-eth"
+    paper_symbol: str = "ETH/USDT"
 
     @property
     def risk_pct_clamped(self) -> float:
@@ -128,4 +130,8 @@ def load_settings(env_file: str | Path | None = ".env") -> Settings:
         orderbook_depth_bps=_as_float("ORDERBOOK_DEPTH_BPS", 5.0),
         orderbook_limit=_as_int("ORDERBOOK_LIMIT", 20),
         orderbook_exchange=os.getenv("ORDERBOOK_EXCHANGE", "").strip(),
+        paper_profile=(os.getenv("PAPER_PROFILE", "paper-eth") or "paper-eth").strip()
+        or "paper-eth",
+        paper_symbol=(os.getenv("PAPER_SYMBOL", "ETH/USDT") or "ETH/USDT").strip()
+        or "ETH/USDT",
     )

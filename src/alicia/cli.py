@@ -38,6 +38,7 @@ from alicia.strategy import (
 )
 from dataclasses import replace
 from alicia.orderbook import (
+    evaluate_book_from_settings,
     fetch_public_order_book_with_fallback,
     load_book_json,
 )
@@ -288,13 +289,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     paper = sub.add_parser(
         "paper",
-        help="Evaluate the latest signal + public L2 book. Does not place orders.",
+        help="Evaluate the official ETH/USDT regime-20 paper signal + L2 book. "
+        "Does not place orders. Does not enable live trading.",
     )
     paper.add_argument("--csv", default=None)
     paper.add_argument(
         "--public",
         action="store_true",
-        help="Fetch the latest public 1h candles via ccxt (no API key). Requires ccxt",
+        help="Fetch the latest public candles via ccxt (no API key). Uses the profile entry TF.",
     )
     paper.add_argument("--cache-dir", default=None)
     paper.add_argument("--book", default=None, help="L2 JSON snapshot instead of a live fetch")
@@ -302,6 +304,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-book",
         action="store_true",
         help="Skip the L2 fetch (fails closed if ORDERBOOK_REQUIRE=true)",
+    )
+    paper.add_argument(
+        "--profile",
+        default=None,
+        choices=sorted(PROFILES),
+        help="Paper profile (default: PAPER_PROFILE / paper-eth). "
+        "paper-eth and regime-20 are the locked ETH paper bundle.",
+    )
+    paper.add_argument(
+        "--symbol",
+        default=None,
+        help="Spot symbol (default: profile pin or PAPER_SYMBOL / ETH/USDT for paper-eth)",
+    )
+    paper.add_argument(
+        "--exchange",
+        default=None,
+        help="Cache / public-candle venue (default: EXCHANGE or ORDERBOOK_EXCHANGE)",
     )
 
     book = sub.add_parser(
@@ -327,6 +346,10 @@ Alicia rules (see docs/SPEC.md)
   5. Kill-switch: halt on −10% monthly drawdown; pause on CPI/Fed/NFP days; pause on API/latency errors.
   6. Order book (paper/live, not historical backtest): spread ≤ max bps; top-N imbalance ≥ min;
      bid depth within N bps of mid ≥ min size. Fail closed if the book is missing when required.
+
+  Official paper profile (not the BTC backtest default): ETH/USDT regime-20.
+    python -m alicia paper --profile paper-eth
+  Paper evaluates the latest closed bar + L2 gate only. No orders. No live mode.
 
   API safety: read + trade only. This CLI has no withdrawal/transfer commands.
   Forbidden actions: {forbidden}
@@ -385,6 +408,23 @@ def _apply_profile(args) -> str:
     if spec.stop_atr is not None and args.stop_atr is None:
         args.stop_atr = spec.stop_atr
     return name
+
+
+def _resolve_paper_bundle(args, settings):
+    """Official paper default is paper-eth (ETH/USDT regime-20). Not live."""
+    name = getattr(args, "profile", None) or settings.paper_profile or "paper-eth"
+    if name not in PROFILES:
+        raise ValueError(f"Unknown paper profile: {name}")
+    spec = PROFILES[name]
+    if getattr(args, "symbol", None):
+        symbol = args.symbol
+    elif spec.symbol:
+        symbol = spec.symbol
+    elif name in {"paper-eth", "regime-20"}:
+        symbol = settings.paper_symbol or "ETH/USDT"
+    else:
+        symbol = settings.symbol
+    return spec, symbol
 
 
 def _trend_tf(entry_tf: str, override: str | None) -> str:
@@ -522,6 +562,9 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "exchange", None):
             settings = replace(settings, exchange_id=args.exchange)
         profile_name = _apply_profile(args)
+        spec_bt = PROFILES.get(profile_name)
+        if spec_bt is not None and spec_bt.symbol and not getattr(args, "symbol", None):
+            settings = replace(settings, symbol=spec_bt.symbol)
         ohlcv, source = _resolve_ohlcv(args, settings)
         if ohlcv is None:
             return 2
@@ -713,8 +756,6 @@ def main(argv: list[str] | None = None) -> int:
             )
         print("\nDry-run complete. Exchange API keys were not used.")
         if args.book:
-            from alicia.orderbook import evaluate_book_from_settings, load_book_json
-
             snap = load_book_json(args.book)
             book = evaluate_book_from_settings(snap, settings)
             print("\nOrder-book fixture (not historical — one recorded snapshot):")
@@ -737,20 +778,50 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        try:
+            spec, symbol = _resolve_paper_bundle(args, settings)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if getattr(args, "exchange", None):
+            settings = replace(settings, exchange_id=args.exchange)
+        settings = replace(settings, symbol=symbol)
+        entry_tf = spec.entry_timeframe
         if args.csv:
-            ohlcv = load_paper_ohlcv(settings, csv_path=args.csv, use_public=False)
+            ohlcv = load_paper_ohlcv(settings, csv_path=args.csv, symbol=symbol)
         elif args.public:
-            ohlcv = load_paper_ohlcv(settings, use_public=True)
+            try:
+                ohlcv = load_paper_ohlcv(
+                    settings,
+                    use_public=True,
+                    timeframe=entry_tf,
+                    symbol=symbol,
+                )
+            except Exception as exc:
+                print(f"Public candle fetch failed: {exc}", file=sys.stderr)
+                return 1
         else:
-            path = resolve_cached_1h(
+            path = resolve_or_resample(
                 settings.exchange_id,
-                settings.symbol,
+                symbol,
+                entry_tf,
                 cache_dir(args.cache_dir),
             )
-            if path is not None:
-                ohlcv = read_cache(path)
-            else:
-                ohlcv = load_paper_ohlcv(settings)
+            if path is None:
+                preferred = cache_csv_path(
+                    settings.exchange_id, symbol, entry_tf, cache_dir(args.cache_dir)
+                )
+                print(
+                    f"No cached {symbol} {entry_tf} at {preferred}\n"
+                    "Download public history (no API key), then re-run paper:\n"
+                    f"  python -m alicia download --exchange okx --symbol {symbol} "
+                    f"--timeframe {entry_tf} --years 2\n"
+                    "  python -m alicia paper --profile paper-eth\n"
+                    "Or: python -m alicia paper --profile paper-eth --public",
+                    file=sys.stderr,
+                )
+                return 2
+            ohlcv = read_cache(path)
         book = None
         book_venue = None
         if args.book:
@@ -760,7 +831,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 book, used = fetch_public_order_book_with_fallback(
                     settings.orderbook_venue,
-                    settings.symbol,
+                    symbol,
                     limit=settings.orderbook_limit,
                 )
                 book_venue = used
@@ -768,11 +839,27 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Public L2 fetch failed: {exc}", file=sys.stderr)
                 book = None
                 book_venue = None
-        snap = evaluate_latest(ohlcv, settings, book=book, book_venue=book_venue)
-        print("Alicia paper snapshot (no order sent)")
+        snap = evaluate_latest(
+            ohlcv,
+            settings,
+            book=book,
+            book_venue=book_venue,
+            profile=spec,
+            symbol=symbol,
+        )
+        official = spec.name in {"paper-eth", "regime-20"}
+        print("Alicia paper snapshot — PAPER ONLY (no order sent, live trading disabled)")
+        print(
+            f"  profile:    {spec.name}"
+            + ("  [official ETH regime-20 paper]" if official else "")
+        )
+        print(f"  symbol:     {symbol}")
+        print(f"  timeframes: entry {spec.entry_timeframe} / trend EMA200 {spec.trend_timeframe}")
+        print(f"  signal:     {spec.signal}  ADX split {spec.extra.adx_split:g}")
         print(f"  time:       {snap.timestamp}")
         print(f"  price:      {snap.price:.2f}")
-        print(f"  EMA200 4h:  {snap.ema200_4h}")
+        print(f"  EMA200:     {snap.ema200_4h}")
+        print(f"  ADX 14:     {snap.adx}")
         print(f"  RSI 14:     {snap.prev_rsi} → {snap.rsi}")
         print(f"  volume:     {snap.volume:.2f} vs MA20 {snap.volume_ma}")
         print(f"  ATR 14:     {snap.atr}")
@@ -780,6 +867,18 @@ def main(argv: list[str] | None = None) -> int:
         _print_book_section(snap)
         print(f"  decision:   {'ENTER LONG' if snap.decision.enter else 'NO ENTRY'}")
         print(f"  reason:     {snap.decision.reason}")
+        if official:
+            print(
+                "  note:       Locked paper profile. Same rules lose on BTC. "
+                "OOS is thin. See docs/BACKTEST.md § Potential search."
+            )
+        book_missing = settings.orderbook_enabled and settings.orderbook_require and (
+            snap.book is None
+            or (not snap.book.ok and "unavailable" in (snap.book.reason or ""))
+        )
+        if book_missing:
+            print("Fail closed: no new LONG while L2 is missing or required.", file=sys.stderr)
+            return 2
         return 0
 
     parser.error(f"unknown command {args.command}")
@@ -813,8 +912,6 @@ def _print_book_section(snap) -> None:
 
 
 def _run_book_command(args, settings) -> int:
-    from alicia.orderbook import evaluate_book_from_settings
-
     try:
         if args.book_json:
             snap = load_book_json(args.book_json)

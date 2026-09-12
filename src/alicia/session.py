@@ -119,6 +119,7 @@ class StrategyProfile:
     stop_mode: str = "atr"
     side: str = "long"
     vol_target: float | None = None
+    symbol: str | None = None
 
 
 PROFILE_US_SESSION = StrategyProfile(
@@ -269,6 +270,19 @@ PROFILE_REGIME_20 = StrategyProfile(
     signal="regime",
     extra=ExtraFilters(adx_split=20.0),
 )
+
+# Official paper profile: same rules as regime-20, pinned to ETH/USDT. Not live.
+PROFILE_PAPER_ETH = StrategyProfile(
+    name="paper-eth",
+    entry_timeframe="4h",
+    trend_timeframe="12h",
+    session=None,
+    reward_risk=2.0,
+    stop_atr=1.5,
+    signal="regime",
+    extra=ExtraFilters(adx_split=20.0),
+    symbol="ETH/USDT",
+)
 PROFILE_REGIME_2H = StrategyProfile(
     name="regime-2h",
     entry_timeframe="2h",
@@ -331,6 +345,7 @@ PROFILES = {
     "pullback": PROFILE_PULLBACK,
     "regime": PROFILE_REGIME,
     "regime-20": PROFILE_REGIME_20,
+    "paper-eth": PROFILE_PAPER_ETH,
     "regime-us": PROFILE_REGIME_US,
     "regime-2h": PROFILE_REGIME_2H,
     "trend-adx": PROFILE_TREND_ADX,

@@ -139,7 +139,26 @@ Do not promote this profile to the product default unless a later sample is clea
 
 See `docs/BACKTEST.md` for the comparison vs product RSI and `us-session`. Do not silently replace the RSI default.
 
-**Regime switch (curiosity):** `--signal regime` / `--profile regime` / `regime-20`. If ADX(14) on the entry bar is ≥ `adx_split` (25, or 20 for `regime-20`), use the Donchian breakout; otherwise use the product RSI bounce. Optional `--adx-min` / `--adx-max` / `--di-align` / `--vol-halt` / `--side short|both`. Shorts are **futures-like research**, not spot-executable. The only bundle that met the written potential bar on ~2y OKX was **ETH/USDT `regime-20`** (see `docs/BACKTEST.md` § Potential search). BTC product default stays RSI.
+**Regime switch (curiosity / paper):** `--signal regime` / `--profile regime` / `regime-20` / `paper-eth`. If ADX(14) on the entry bar is ≥ `adx_split` (25, or 20 for `regime-20` / `paper-eth`), use the Donchian breakout; otherwise use the product RSI bounce. Optional `--adx-min` / `--adx-max` / `--di-align` / `--vol-halt` / `--side short|both`. Shorts are **futures-like research**, not spot-executable. BTC product default for `backtest` without flags stays RSI.
+
+## Official paper profile — ETH/USDT `regime-20`
+
+**Locked for paper only.** Not live. Does not replace the BTC 1h/4h RSI product default.
+
+| Item | Value |
+| --- | --- |
+| Symbol | **ETH/USDT** |
+| Profile | **`paper-eth`** (same rules as `regime-20`) |
+| Entry / trend | 4h / completed 12h EMA200 |
+| Switch | ADX(14) ≥ **20** → Donchian-20 high breakout; else RSI(14) cross up through 40 + volume |
+| Stop / TP | 1.5×ATR / 3.0×ATR (RR 1:2). Same-bar stop first |
+| Sessions | 24/7 (no US-peak filter) |
+| Paper L2 | Existing order-book gates (spread / imbalance / depth). Fail closed if `ORDERBOOK_REQUIRE` and the book is missing |
+| Mode | Evaluate latest **closed** bar only. **No orders. No withdrawals. Live trading is disabled.** |
+
+Recommended command: `python -m alicia paper --profile paper-eth`
+
+Known caveats: the same bundle **fails on BTC**; ETH mid-sample OOS is thin. See `docs/BACKTEST.md` § Potential search and § How to paper trade.
 
 ## Execution assumptions (backtest)
 
