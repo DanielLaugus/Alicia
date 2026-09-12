@@ -4,7 +4,7 @@ BTC/USDT **spot** trading bot. Backtesting first; paper and live come later.
 
 The strategy is encoded as explicit, unit-tested rules in `src/alicia/strategy.py` and `src/alicia/risk.py`. The human-readable source of truth is [`docs/SPEC.md`](docs/SPEC.md).
 
-No exchange keys are required to install, test, or dry-run.
+No exchange keys are required to install, test, download public history, or dry-run.
 
 ## Strategy rules
 
@@ -31,22 +31,45 @@ cp .env.example .env
 
 `.env` is gitignored. Leave `EXCHANGE_API_KEY` / `EXCHANGE_API_SECRET` empty for backtest and dry-run.
 
-Optional public-data fetch (still no key):
+Public history (still no key) needs ccxt:
 
 ```bash
-pip install -e ".[exchange]"
+pip install -e ".[dev,exchange]"
 ```
 
-## Backtest
+## Real market data + backtest
 
-Uses fees (`FEE_BPS`) and adverse slippage (`SLIPPAGE_BPS`) on every fill. Default data is a deterministic synthetic 1h BTC series (enough history for EMA200 on 4h). Pass `--csv` for your own candles (`timestamp,open,high,low,close,volume`).
+Public BTC/USDT **spot** 1h candles come from ccxt (Binance by default). No API key. 4h bars used by the EMA200 trend filter are **resampled from 1h** so the series stays consistent.
+
+Cache files live under `data/cache/` (gitignored). After the first download, backtests run offline.
 
 ```bash
+# ~2 years of 1h BTC/USDT (paginated public fetch)
+python -m alicia download --years 2
+
+# Incremental update (only bars after the last cached timestamp)
+python -m alicia download
+
+# Reproducible backtest on the cache: fees + slippage, win rate, max DD
 python -m alicia backtest
-python -m alicia backtest --csv path/to/btcusdt_1h.csv
 ```
 
-Dry-run (no keys; prints the report plus sample entry decisions):
+Useful variants:
+
+```bash
+python -m alicia download --exchange bybit --years 2   # if Binance is blocked
+python -m alicia download --since 2024-01-01 --force
+python -m alicia backtest --csv path/to/btcusdt_1h.csv
+python -m alicia backtest --synthetic                  # built-in demo series
+```
+
+A recorded run on downloaded Binance history is in [`docs/BACKTEST.md`](docs/BACKTEST.md). Re-run the two commands above to refresh those numbers.
+
+**CI / unit tests never hit the network.** Live `download` + `backtest` is a manual/integration step.
+
+## Synthetic dry-run
+
+Uses fees (`FEE_BPS`) and adverse slippage (`SLIPPAGE_BPS`) on every fill. The dry-run series is deterministic and needs no cache.
 
 ```bash
 python -m alicia dry-run
@@ -64,8 +87,9 @@ python -m alicia rules
 Paper mode **evaluates the latest closed-bar signal only**. It does not place orders.
 
 ```bash
-python -m alicia paper              # synthetic or --csv
-python -m alicia paper --public     # ccxt public OHLCV, no API key
+python -m alicia paper              # cached 1h if present, else synthetic
+python -m alicia paper --public     # latest public 1h candles via ccxt (no key)
+python -m alicia paper --csv path/to/btcusdt_1h.csv
 ```
 
 A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing / kill-switch → spot buy/sell only. That path is not enabled by this CLI.
@@ -92,6 +116,7 @@ A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing 
 | `PAUSE_CPI` / `PAUSE_FED` / `PAUSE_NFP` | `true` | Event-day pauses |
 | `EVENTS_PATH` | `data/events.example.json` | Extra calendar dates |
 | `SYMBOL` / `EXCHANGE` | `BTC/USDT` / `binance` | Market (spot) |
+| `DATA_CACHE_DIR` | `data/cache` | Public OHLCV cache (gitignored) |
 | `ALICIA_MODE` | `backtest` | `backtest` \| `paper` \| `live` |
 | `API_LATENCY_MS_LIMIT` | `5000` | Latency pause threshold |
 
@@ -99,8 +124,10 @@ A future live loop would: poll 1h/4h candles → same `evaluate_entry` / sizing 
 
 ```
 docs/SPEC.md          # strategy source of truth
-src/alicia/           # strategy, risk, calendar, backtest, paper
-tests/                # unit tests + dry-run proof
+docs/BACKTEST.md      # last real-data backtest numbers
+src/alicia/           # strategy, risk, calendar, backtest, download
+tests/                # unit tests (offline; mocked fetch)
 data/events.example.json
+data/cache/           # gitignored public OHLCV after `download`
 .env.example
 ```

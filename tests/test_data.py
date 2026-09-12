@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from alicia.data import (
+    bars_to_frame,
+    cache_csv_path,
+    download_ohlcv,
+    drop_incomplete_last_bar,
+    load_ohlcv,
+    merge_ohlcv,
+    paginate_ohlcv,
+    read_cache,
+)
+from alicia.sample_data import generate_sample_ohlcv, ohlcv_to_csv
+
+
+def _catalog(n: int = 2500, start: str = "2024-01-01"):
+    idx = pd.date_range(start, periods=n, freq="1h", tz="UTC")
+    return [
+        [int(ts.timestamp() * 1000), 100.0, 101.0, 99.0, 100.5, 10.0]
+        for ts in idx
+    ]
+
+
+class FakePublicExchange:
+    def __init__(self, rows: list[list], page: int = 400):
+        self.rows = rows
+        self.page = page
+        self.calls: list[tuple] = []
+
+    def __call__(self, symbol: str, timeframe: str, since_ms: int | None, limit: int):
+        self.calls.append((symbol, timeframe, since_ms, limit))
+        subset = [r for r in self.rows if since_ms is None or r[0] >= since_ms]
+        return subset[: min(limit, self.page)]
+
+
+def test_bars_to_frame_and_merge_dedupes():
+    a = bars_to_frame([[1_700_000_000_000, 1, 2, 0.5, 1.5, 10]])
+    b = bars_to_frame(
+        [
+            [1_700_000_000_000, 1, 2, 0.5, 1.6, 11],
+            [1_700_000_360_000, 1.6, 2, 1, 1.7, 8],
+        ]
+    )
+    merged = merge_ohlcv(a, b)
+    assert len(merged) == 2
+    assert merged.iloc[0]["close"] == 1.6
+
+
+def test_drop_incomplete_last_bar():
+    idx = pd.date_range("2024-01-01", periods=3, freq="1h", tz="UTC")
+    frame = pd.DataFrame(
+        {"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},
+        index=idx,
+    )
+    now = datetime(2024, 1, 1, 2, 30, tzinfo=timezone.utc)
+    trimmed = drop_incomplete_last_bar(frame, "1h", now=now)
+    assert len(trimmed) == 2
+    assert trimmed.index[-1] == idx[1]
+
+
+def test_paginate_walks_since_cursor():
+    rows = _catalog(1250)
+    fake = FakePublicExchange(rows, page=400)
+    frame = paginate_ohlcv(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since_ms=rows[0][0],
+        until_ms=rows[-1][0] + 3_600_000,
+        limit=400,
+        fetch=fake,
+    )
+    assert len(frame) == 1250
+    assert len(fake.calls) >= 4
+
+
+def test_cache_roundtrip(tmp_path):
+    src = generate_sample_ohlcv(n_1h=48, seed=1)
+    path = tmp_path / "sample.csv"
+    ohlcv_to_csv(src, path)
+    loaded = load_ohlcv(path)
+    pd.testing.assert_frame_equal(src, loaded, check_freq=False)
+
+
+def test_download_writes_cache_and_derived_4h(tmp_path):
+    rows = _catalog(40, start="2024-01-01")
+    fake = FakePublicExchange(rows, page=20)
+    now_ms = rows[-1][0] + 3_600_000
+    frame = download_ohlcv(
+        exchange_id="binance",
+        symbol="BTC/USDT",
+        since="2024-01-01",
+        until=str(pd.Timestamp(now_ms, unit="ms", tz="UTC")),
+        directory=tmp_path,
+        force=True,
+        fetch=fake,
+        derive_4h=True,
+    )
+    path = cache_csv_path("binance", "BTC/USDT", "1h", tmp_path)
+    assert path.exists()
+    assert cache_csv_path("binance", "BTC/USDT", "4h", tmp_path).exists()
+    cached = read_cache(path)
+    assert len(cached) == len(frame)
+    assert cached.index.tz is not None
+
+
+def test_download_appends_incrementally(tmp_path):
+    rows = _catalog(30, start="2024-01-01")
+    first = FakePublicExchange(rows[:20], page=50)
+    until = str(pd.Timestamp(rows[19][0] + 3_600_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="binance",
+        symbol="BTC/USDT",
+        since="2024-01-01",
+        until=until,
+        directory=tmp_path,
+        force=True,
+        fetch=first,
+        derive_4h=False,
+    )
+    second = FakePublicExchange(rows, page=50)
+    until2 = str(pd.Timestamp(rows[-1][0] + 3_600_000, unit="ms", tz="UTC"))
+    frame = download_ohlcv(
+        exchange_id="binance",
+        symbol="BTC/USDT",
+        until=until2,
+        directory=tmp_path,
+        force=False,
+        fetch=second,
+        derive_4h=False,
+    )
+    assert len(frame) == 30
+    # Incremental call should start after the last cached bar, not from year window.
+    assert second.calls[0][2] > rows[0][0]
+
+
+def test_fixture_csv_loads():
+    frame = load_ohlcv("tests/fixtures/tiny_btcusdt_1h.csv")
+    assert list(frame.columns) == ["open", "high", "low", "close", "volume"]
+    assert len(frame) == 5
+    assert str(frame.index.tz) == "UTC"

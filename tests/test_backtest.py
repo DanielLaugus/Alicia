@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from alicia.backtest import apply_buy_slippage, apply_sell_slippage, run_backtest
+from alicia.backtest import (
+    apply_buy_slippage,
+    apply_sell_slippage,
+    max_drawdown_pct,
+    run_backtest,
+)
 from alicia.calendar import EventCalendar, MacroEvent
 from alicia.cli import main
 from alicia.indicators import attach_indicators
@@ -17,6 +22,27 @@ def test_sample_series_produces_trades_after_ema_warmup(settings):
     first = result.trades[0]
     # 200 × 4h warmup from 2024-01-01 → first valid trend date is early February
     assert first.signal_time >= pd.Timestamp("2024-02-03", tz="UTC")
+
+
+def test_max_drawdown_from_peak():
+    equity = pd.Series([100.0, 120.0, 108.0, 90.0, 95.0])
+    assert abs(max_drawdown_pct(equity) - ((90.0 - 120.0) / 120.0)) < 1e-9
+
+
+def test_closed_trades_record_positive_slippage_cost(settings):
+    result = run_backtest(generate_sample_ohlcv(), settings)
+    closed = result.closed_trades
+    assert closed
+    assert all(t.slippage_quote > 0 for t in closed)
+    s = result.summary()
+    assert s["win_rate_pct"] >= 0
+    assert s["max_drawdown_pct"] <= 0
+
+
+def test_zero_cost_compare_shows_cost_impact(settings):
+    result = run_backtest(generate_sample_ohlcv(), settings, compare_zero_cost=True)
+    assert result.zero_cost_end_equity is not None
+    assert result.zero_cost_end_equity >= result.end_equity - 1e-6
 
 
 def test_slippage_is_adverse():
@@ -103,3 +129,20 @@ def test_cli_dry_run_without_keys(capsys):
     assert code == 0
     assert "keys were not used" in captured.out.lower() or "Dry-run complete" in captured.out
     assert "EXCHANGE_API" not in captured.out
+
+
+def test_cli_backtest_without_cache_exits_cleanly(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    code = main(["backtest", "--cache-dir", str(tmp_path / "empty-cache")])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "No cached OHLCV" in captured.err
+    assert "download" in captured.err
+
+
+def test_cli_backtest_synthetic(capsys):
+    code = main(["backtest", "--synthetic", "--no-cost-compare"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "source:        synthetic" in captured.out
+    assert "win rate" in captured.out

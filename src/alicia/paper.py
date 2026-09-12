@@ -85,4 +85,4 @@ def load_paper_ohlcv(settings: Settings, csv_path: str | None = None, use_public
         return load_ohlcv(csv_path)
     if use_public:
         return fetch_public_ohlcv(symbol=settings.symbol, exchange_id=settings.exchange_id)
-    return load_ohlcv(None)
+    return load_ohlcv(synthetic=True)

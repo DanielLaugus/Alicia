@@ -41,7 +41,7 @@ def generate_sample_ohlcv(
             400.0, 520.0, bounce
         )
 
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "open": open_,
             "high": high,
@@ -51,6 +51,8 @@ def generate_sample_ohlcv(
         },
         index=index,
     )
+    frame.index.name = "timestamp"
+    return frame
 
 
 def ohlcv_to_csv(df: pd.DataFrame, path) -> None:
