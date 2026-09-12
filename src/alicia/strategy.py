@@ -14,6 +14,7 @@ class ExtraFilters:
     """Optional entry gates. All off = product default."""
 
     require_ema_slope: bool = False
+    require_ema50: bool = False
     chop_filter: bool = False
     rsi_from: float | None = None
 
@@ -66,6 +67,7 @@ def evaluate_entry(
     session_ok: bool = True,
     extra: ExtraFilters | None = None,
     ema200_prev: float | None = None,
+    ema50: float | None = None,
     atr_pct: float | None = None,
     atr_pct_q25: float | None = None,
 ) -> EntryDecision:
@@ -86,6 +88,11 @@ def evaluate_entry(
             return EntryDecision(False, "EMA200 slope not ready")
         if ema200_4h <= ema200_prev:
             return EntryDecision(False, "EMA200 is not sloping up")
+    if extra.require_ema50:
+        if ema50 is None or not np_finite(ema50):
+            return EntryDecision(False, "EMA50 not ready")
+        if price <= ema50:
+            return EntryDecision(False, "price is not above EMA50")
     if extra.chop_filter:
         if atr_pct is None or atr_pct_q25 is None or not np_finite(atr_pct) or not np_finite(atr_pct_q25):
             return EntryDecision(False, "ATR% chop filter not ready")

@@ -144,6 +144,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Experiment: require the trend EMA200 to be rising vs the prior bar",
     )
     bt.add_argument(
+        "--ema50",
+        action="store_true",
+        help="Experiment: require price above EMA50 on the entry TF (AND with other gates)",
+    )
+    bt.add_argument(
         "--chop-filter",
         action="store_true",
         help="Experiment: skip entries when ATR% is below its 200-bar 25th percentile",
@@ -236,7 +241,7 @@ def _session_from_args(args) -> SessionWindow | None:
     end_raw = getattr(args, "session_end", None)
     if preset_name:
         base = SESSION_PRESETS[preset_name]
-    elif profile_name in {"us-session", "us-session-1h"}:
+    elif profile_name in {"us-session", "us-session-1h", "us-peak-1h", "us-peak-all"}:
         base = PROFILES[profile_name].session
     elif start_raw or end_raw:
         base = SESSION_PRESETS["us-primary"]
@@ -415,13 +420,25 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        spec = PROFILES.get(profile_name, PROFILES["default"])
         extra = ExtraFilters(
-            require_ema_slope=bool(getattr(args, "ema_slope", False)),
-            chop_filter=bool(getattr(args, "chop_filter", False)),
-            rsi_from=getattr(args, "rsi_from", None),
+            require_ema_slope=bool(getattr(args, "ema_slope", False)) or spec.extra.require_ema_slope,
+            require_ema50=bool(getattr(args, "ema50", False)) or spec.extra.require_ema50,
+            chop_filter=bool(getattr(args, "chop_filter", False)) or spec.extra.chop_filter,
+            rsi_from=getattr(args, "rsi_from", None)
+            if getattr(args, "rsi_from", None) is not None
+            else spec.extra.rsi_from,
         )
         breakeven_r = getattr(args, "breakeven_r", None)
-        extras_on = extra.require_ema_slope or extra.chop_filter or extra.rsi_from is not None or breakeven_r
+        if breakeven_r is None:
+            breakeven_r = spec.breakeven_r
+        extras_on = (
+            extra.require_ema_slope
+            or extra.require_ema50
+            or extra.chop_filter
+            or extra.rsi_from is not None
+            or breakeven_r
+        )
         if entry_tf == "1m":
             print(
                 "EXPERIMENT: 1m entry / "
@@ -437,6 +454,8 @@ def main(argv: list[str] | None = None) -> int:
             bits = []
             if extra.require_ema_slope:
                 bits.append("ema-slope")
+            if extra.require_ema50:
+                bits.append("ema50")
             if extra.chop_filter:
                 bits.append("chop-filter")
             if extra.rsi_from is not None:

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from alicia.indicators import TREND_COMPLETE
+from alicia.strategy import ExtraFilters
 
 NY_TZ = "America/New_York"
 
@@ -110,6 +111,8 @@ class StrategyProfile:
     session: SessionWindow | None
     reward_risk: float | None
     stop_atr: float = 1.5
+    extra: ExtraFilters = ExtraFilters()
+    breakeven_r: float | None = None
 
 
 PROFILE_US_SESSION = StrategyProfile(
@@ -121,8 +124,9 @@ PROFILE_US_SESSION = StrategyProfile(
     stop_atr=1.5,
 )
 
-PROFILE_US_SESSION_1H = StrategyProfile(
-    name="us-session-1h",
+# 1h entries only inside the NY peak band; 4h EMA200 trend.
+PROFILE_US_PEAK_1H = StrategyProfile(
+    name="us-peak-1h",
     entry_timeframe="1h",
     trend_timeframe="4h",
     session=US_PEAK,
@@ -130,10 +134,29 @@ PROFILE_US_SESSION_1H = StrategyProfile(
     stop_atr=1.5,
 )
 
+# All optional gates stacked on us-peak-1h (A/B vs the same with product TP).
+PROFILE_US_PEAK_ALL = StrategyProfile(
+    name="us-peak-all",
+    entry_timeframe="1h",
+    trend_timeframe="4h",
+    session=US_PEAK,
+    reward_risk=2.0,
+    stop_atr=1.5,
+    extra=ExtraFilters(
+        require_ema_slope=True,
+        require_ema50=True,
+        chop_filter=True,
+        rsi_from=30.0,
+    ),
+    breakeven_r=1.0,
+)
+
 PROFILES = {
     "default": StrategyProfile("default", "1h", "4h", None, None, 1.5),
     "us-session": PROFILE_US_SESSION,
-    "us-session-1h": PROFILE_US_SESSION_1H,
+    "us-session-1h": PROFILE_US_PEAK_1H,
+    "us-peak-1h": PROFILE_US_PEAK_1H,
+    "us-peak-all": PROFILE_US_PEAK_ALL,
 }
 
 

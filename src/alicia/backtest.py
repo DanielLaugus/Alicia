@@ -287,6 +287,7 @@ def run_backtest(
         session_ok = in_entry_span and session_allows_signal(ts, entry_timeframe, session)
 
         ema_prev = row["ema200_prev"] if "ema200_prev" in frame.columns else None
+        ema50_v = row["ema50"] if "ema50" in frame.columns else None
         atr_pct = row["atr_pct"] if "atr_pct" in frame.columns else None
         atr_q = row["atr_pct_q25"] if "atr_pct_q25" in frame.columns else None
         decision = evaluate_entry(
@@ -302,6 +303,7 @@ def run_backtest(
             session_ok=session_ok,
             extra=extra,
             ema200_prev=None if ema_prev is None or pd.isna(ema_prev) else float(ema_prev),
+            ema50=None if ema50_v is None or pd.isna(ema50_v) else float(ema50_v),
             atr_pct=None if atr_pct is None or pd.isna(atr_pct) else float(atr_pct),
             atr_pct_q25=None if atr_q is None or pd.isna(atr_q) else float(atr_q),
         )
