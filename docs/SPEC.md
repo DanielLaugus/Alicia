@@ -118,11 +118,10 @@ Winning bundle after a small A/B (see `docs/BACKTEST.md` § US session bot):
 | Item | Value |
 | --- | --- |
 | Entry / trend | 4h / 12h EMA200 |
-| Session | **13:00–17:00 UTC Mon–Fri** (London–NY overlap). Signal clock = **completed bar close** (index is bar open). |
+| Session | **[09:00, 13:00) America/New_York**, Mon–Fri NY (DST-aware). = 13:00–17:00 UTC in EDT, 14:00–18:00 UTC in EST. Signal clock = **completed bar close**. |
 | Off-hours | **No new entries.** Open positions still hit stop/TP anytime (no flat-by-close). |
 | Stop / TP | 1.5×ATR / 3.0×ATR (RR 1:2) |
-| Weekends | No new entries (UTC Saturday/Sunday). On 4h this did not change fills vs all-days. |
-| UTC clock | Fixed hours, **not** DST-shifted ET. |
+| Weekends | **No new entries** on Saturday/Sunday in **America/New_York** (Friday NY evening is still allowed even if UTC is Saturday). Open risk is managed through the weekend. |
 
 Do not promote this profile to the product default unless a later sample is clearly profitable after fees.
 

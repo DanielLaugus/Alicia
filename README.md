@@ -77,7 +77,7 @@ python -m alicia backtest --timeframe 2h --reward-risk 2
 python -m alicia download --timeframe 4h --years 2
 python -m alicia backtest --timeframe 4h --reward-risk 2
 
-# US-session profile (not the product default): 4h/12h, RR 1:2, 13:00–17:00 UTC Mon–Fri
+# US-session profile (not the product default): 4h/12h, RR 1:2, 09:00–13:00 America/New_York Mon–Fri
 python -m alicia backtest --profile us-session
 ```
 

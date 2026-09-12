@@ -224,7 +224,14 @@ def _session_from_args(args) -> SessionWindow | None:
     start = parse_hhmm(start_raw) if start_raw else base.start_minute
     end = parse_hhmm(end_raw) if end_raw else base.end_minute
     weekdays = False if getattr(args, "all_days", False) else base.weekdays_only
-    return SessionWindow(start, end, weekdays_only=weekdays, name=base.name)
+    return SessionWindow(
+        start,
+        end,
+        weekdays_only=weekdays,
+        name=base.name,
+        timezone=base.timezone,
+        end_exclusive=base.end_exclusive if not (start_raw or end_raw) else False,
+    )
 
 
 def _apply_profile(args) -> str:
