@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 RSI_CROSS_LEVEL = 40.0
 STOP_ATR_MULT = 1.5
-TP_ATR_MULT = 2.0
+TP_ATR_MULT = 2.0  # product default (~1:1.33 RR). Experiments may use 3.0 for 1:2.
 
 
 @dataclass(frozen=True)
@@ -27,16 +27,20 @@ def trend_allows_long(price: float, ema200_4h: float) -> bool:
     return price > ema200_4h
 
 
-def stop_price(entry: float, atr_value: float) -> float:
+def stop_price(entry: float, atr_value: float, *, atr_mult: float = STOP_ATR_MULT) -> float:
     if atr_value <= 0:
         raise ValueError("ATR must be positive to place a stop")
-    return entry - STOP_ATR_MULT * atr_value
+    if atr_mult <= 0:
+        raise ValueError("Stop ATR multiple must be positive")
+    return entry - atr_mult * atr_value
 
 
-def take_profit_price(entry: float, atr_value: float) -> float:
+def take_profit_price(entry: float, atr_value: float, *, atr_mult: float = TP_ATR_MULT) -> float:
     if atr_value <= 0:
         raise ValueError("ATR must be positive to place a take-profit")
-    return entry + TP_ATR_MULT * atr_value
+    if atr_mult <= 0:
+        raise ValueError("Take-profit ATR multiple must be positive")
+    return entry + atr_mult * atr_value
 
 
 def evaluate_entry(

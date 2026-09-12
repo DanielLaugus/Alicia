@@ -17,9 +17,10 @@ from alicia.data import (
     download_ohlcv_with_fallback,
     load_ohlcv,
     read_cache,
-    resolve_cached,
     resolve_cached_1h,
+    resolve_or_resample,
 )
+from alicia.strategy import STOP_ATR_MULT, TP_ATR_MULT
 from alicia.orderbook import (
     fetch_public_order_book_with_fallback,
     load_book_json,
@@ -49,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dl.add_argument(
         "--timeframe",
         default="1h",
-        help="Candle timeframe (default: 1h). Use 1m only for the curiosity experiment.",
+        help="Candle timeframe (default: 1h). 1m / 2h are curiosity experiments only.",
     )
     dl.add_argument("--since", default=None, help="UTC start date YYYY-MM-DD (overrides --years/--days)")
     dl.add_argument("--until", default=None, help="UTC end date YYYY-MM-DD (default: now)")
@@ -86,12 +87,31 @@ def _build_parser() -> argparse.ArgumentParser:
     bt.add_argument(
         "--timeframe",
         default="1h",
-        help="Entry timeframe (default: 1h product). 1m is a curiosity experiment only.",
+        help="Entry timeframe (default: 1h product). 1m / 2h are curiosity experiments only.",
     )
     bt.add_argument(
         "--trend-timeframe",
         default=None,
-        help="Trend EMA200 TF (default: 4h for 1h entry, 1h for 1m experiment)",
+        help="Trend EMA200 TF (default: 4h for 1h, 1h for 1m, 8h for 2h)",
+    )
+    bt.add_argument(
+        "--stop-atr",
+        type=float,
+        default=None,
+        help=f"Stop distance in ATR multiples (default: {STOP_ATR_MULT:g}, product)",
+    )
+    bt.add_argument(
+        "--tp-atr",
+        type=float,
+        default=None,
+        help=f"Take-profit distance in ATR multiples (default: {TP_ATR_MULT:g}, product ~1:1.33)",
+    )
+    bt.add_argument(
+        "--reward-risk",
+        type=float,
+        default=None,
+        dest="reward_risk",
+        help="If set, TP ATR = this × stop ATR (e.g. 2 → TP 3.0×ATR when stop is 1.5×ATR)",
     )
 
     dry = sub.add_parser(
@@ -165,7 +185,22 @@ def _missing_cache_message(path: Path) -> str:
 def _trend_tf(entry_tf: str, override: str | None) -> str:
     if override:
         return override
-    return {"1m": "1h", "1h": "4h"}.get(entry_tf, "4h")
+    return {"1m": "1h", "1h": "4h", "2h": "8h"}.get(entry_tf, "4h")
+
+
+def _atr_multiples(args) -> tuple[float, float]:
+    stop_atr = STOP_ATR_MULT if args.stop_atr is None else float(args.stop_atr)
+    if args.reward_risk is not None:
+        if args.reward_risk <= 0:
+            raise ValueError("--reward-risk must be positive")
+        tp_atr = float(args.reward_risk) * stop_atr
+    elif args.tp_atr is not None:
+        tp_atr = float(args.tp_atr)
+    else:
+        tp_atr = TP_ATR_MULT
+    if stop_atr <= 0 or tp_atr <= 0:
+        raise ValueError("ATR multiples must be positive")
+    return stop_atr, tp_atr
 
 
 def _resolve_ohlcv(args, settings):
@@ -176,12 +211,16 @@ def _resolve_ohlcv(args, settings):
         return load_ohlcv(synthetic=True), "synthetic"
     directory = cache_dir(getattr(args, "cache_dir", None))
     timeframe = getattr(args, "timeframe", "1h")
-    path = resolve_cached(settings.exchange_id, settings.symbol, timeframe, directory)
+    path = resolve_or_resample(settings.exchange_id, settings.symbol, timeframe, directory)
     if path is None:
         preferred = cache_csv_path(settings.exchange_id, settings.symbol, timeframe, directory)
         print(_missing_cache_message(preferred), file=sys.stderr)
         return None, None
-    return read_cache(path), f"cache:{path}"
+    source = f"cache:{path}"
+    meta = path.with_suffix(".meta.json")
+    if meta.exists() and "resampled-from-1h" in meta.read_text(encoding="utf-8"):
+        source = f"resampled-{timeframe}-from-1h:{path}"
+    return read_cache(path), source
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -205,9 +244,9 @@ def main(argv: list[str] | None = None) -> int:
             f"Downloading public {symbol} {timeframe} from {exchange} "
             f"(no API key; fallbacks if geo-blocked) → {directory}/ ..."
         )
-        if timeframe == "1m":
+        if timeframe in {"1m", "2h"}:
             print(
-                "NOTE: 1m download is a curiosity experiment. "
+                f"NOTE: {timeframe} download is a curiosity experiment. "
                 "It does not change the default 1h cache pointer."
             )
         def _progress(rows: int, last_ms: int) -> None:
@@ -260,6 +299,11 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "Experiment backtest: python -m alicia backtest --timeframe 1m"
             )
+        elif timeframe == "2h":
+            print(
+                "Experiment backtest: python -m alicia backtest "
+                "--timeframe 2h --reward-risk 2"
+            )
         return 0
 
     if args.command == "backtest":
@@ -268,10 +312,25 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         entry_tf = args.timeframe
         trend_tf = _trend_tf(entry_tf, args.trend_timeframe)
+        try:
+            stop_atr, tp_atr = _atr_multiples(args)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         if entry_tf == "1m":
             print(
                 "EXPERIMENT: 1m entry / "
                 f"{trend_tf} EMA200 trend. Product default remains 1h/4h. "
+                "Order-book filters skipped (no historical L2)."
+            )
+        elif entry_tf == "2h" or args.reward_risk is not None or (
+            args.tp_atr is not None and args.tp_atr != TP_ATR_MULT
+        ):
+            print(
+                f"EXPERIMENT: {entry_tf} entry / {trend_tf} EMA200 / "
+                f"stop {stop_atr:g}×ATR / TP {tp_atr:g}×ATR "
+                f"(RR 1:{tp_atr / stop_atr:g}). "
+                "Product default remains 1h/4h with TP=2×ATR. "
                 "Order-book filters skipped (no historical L2)."
             )
         result = run_backtest(
@@ -281,6 +340,8 @@ def main(argv: list[str] | None = None) -> int:
             compare_zero_cost=not args.no_cost_compare,
             entry_timeframe=entry_tf,
             trend_timeframe=trend_tf,
+            stop_atr_mult=stop_atr,
+            tp_atr_mult=tp_atr,
         )
         print(format_report(result))
         return 0

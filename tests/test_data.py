@@ -15,6 +15,8 @@ from alicia.data import (
     paginate_ohlcv,
     read_cache,
     resolve_cached_1h,
+    resolve_or_resample,
+    write_resampled_cache,
 )
 from alicia.sample_data import generate_sample_ohlcv, ohlcv_to_csv
 
@@ -219,6 +221,70 @@ def test_1m_download_does_not_overwrite_1h_active_pointer(tmp_path):
     )
     assert (tmp_path / "active.json").read_text(encoding="utf-8") == pointer
     assert cache_csv_path("okx", "BTC/USDT", "1m", tmp_path).exists()
+
+
+def test_2h_download_does_not_overwrite_1h_active_pointer(tmp_path):
+    rows_1h = _catalog(24, start="2024-01-01")
+    fake_1h = FakePublicExchange(rows_1h, page=50)
+    until_1h = str(pd.Timestamp(rows_1h[-1][0] + 3_600_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since="2024-01-01",
+        until=until_1h,
+        directory=tmp_path,
+        force=True,
+        fetch=fake_1h,
+        derive_4h=False,
+    )
+    pointer = (tmp_path / "active.json").read_text(encoding="utf-8")
+    rows_2h = [
+        [1_704_067_200_000 + i * 7_200_000, 1, 2, 0.5, 1.5, 1]
+        for i in range(20)
+    ]
+    fake_2h = FakePublicExchange(rows_2h, page=50)
+    until_2h = str(pd.Timestamp(rows_2h[-1][0] + 7_200_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        timeframe="2h",
+        since="2024-01-01",
+        until=until_2h,
+        directory=tmp_path,
+        force=True,
+        fetch=fake_2h,
+        derive_4h=False,
+    )
+    assert (tmp_path / "active.json").read_text(encoding="utf-8") == pointer
+    assert cache_csv_path("okx", "BTC/USDT", "2h", tmp_path).exists()
+
+
+def test_resolve_or_resample_builds_2h_from_1h(tmp_path):
+    rows = _catalog(48, start="2024-01-01")
+    fake = FakePublicExchange(rows, page=80)
+    until = str(pd.Timestamp(rows[-1][0] + 3_600_000, unit="ms", tz="UTC"))
+    download_ohlcv(
+        exchange_id="okx",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since="2024-01-01",
+        until=until,
+        directory=tmp_path,
+        force=True,
+        fetch=fake,
+        derive_4h=False,
+    )
+    path = resolve_or_resample("okx", "BTC/USDT", "2h", tmp_path)
+    assert path is not None
+    frame = read_cache(path)
+    assert len(frame) == 24
+    assert (frame.index[1] - frame.index[0]) == pd.Timedelta(hours=2)
+    src = cache_csv_path("okx", "BTC/USDT", "1h", tmp_path)
+    dest = write_resampled_cache(
+        src, "2h", exchange_id="okx", symbol="BTC/USDT", directory=tmp_path
+    )
+    assert dest.exists()
 
 
 def test_resolve_cached_1h_uses_active_pointer(tmp_path):

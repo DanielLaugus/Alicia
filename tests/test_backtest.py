@@ -10,7 +10,8 @@ from alicia.backtest import (
 )
 from alicia.calendar import EventCalendar, MacroEvent
 from alicia.cli import main
-from alicia.indicators import attach_indicators
+from alicia.cli import _atr_multiples, _trend_tf
+from alicia.indicators import attach_indicators, resample_ohlcv
 from alicia.risk import size_from_settings
 from alicia.sample_data import generate_sample_ohlcv
 from alicia.strategy import evaluate_entry
@@ -166,3 +167,63 @@ def test_cli_backtest_synthetic(capsys):
     assert "entry 1h / trend EMA200 4h" in captured.out
     assert "win rate" in captured.out
     assert "EXPERIMENT" not in captured.out
+    assert "1.5×ATR / 2×ATR" in captured.out
+
+
+def test_trend_tf_defaults_keep_product_and_experiments():
+    assert _trend_tf("1h", None) == "4h"
+    assert _trend_tf("1m", None) == "1h"
+    assert _trend_tf("2h", None) == "8h"
+    assert _trend_tf("2h", "1d") == "1d"
+
+
+def test_atr_multiples_default_and_reward_risk():
+    from argparse import Namespace
+
+    product = Namespace(stop_atr=None, tp_atr=None, reward_risk=None)
+    assert _atr_multiples(product) == (1.5, 2.0)
+    rr2 = Namespace(stop_atr=None, tp_atr=None, reward_risk=2.0)
+    assert _atr_multiples(rr2) == (1.5, 3.0)
+    explicit = Namespace(stop_atr=1.5, tp_atr=3.0, reward_risk=None)
+    assert _atr_multiples(explicit) == (1.5, 3.0)
+
+
+def test_2h_rr_experiment_stop_and_tp_are_1_to_2(settings):
+    hourly = generate_sample_ohlcv(n_1h=4200, seed=11)
+    bars_2h = resample_ohlcv(hourly, "2h")
+    result = run_backtest(
+        bars_2h,
+        settings,
+        entry_timeframe="2h",
+        trend_timeframe="8h",
+        stop_atr_mult=1.5,
+        tp_atr_mult=3.0,
+    )
+    assert result.entry_timeframe == "2h"
+    assert result.trend_timeframe == "8h"
+    assert result.summary()["reward_risk"] == 2.0
+    for trade in result.trades:
+        risk = trade.entry_price - trade.stop
+        reward = trade.take_profit - trade.entry_price
+        assert risk > 0
+        assert abs(reward / risk - 2.0) < 1e-9
+
+
+def test_cli_2h_reward_risk_experiment_banner(capsys):
+    code = main(
+        [
+            "backtest",
+            "--synthetic",
+            "--timeframe",
+            "2h",
+            "--reward-risk",
+            "2",
+            "--no-cost-compare",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "EXPERIMENT" in captured.out
+    assert "2h entry" in captured.out
+    assert "8h EMA200" in captured.out
+    assert "3×ATR" in captured.out or "3.0×ATR" in captured.out

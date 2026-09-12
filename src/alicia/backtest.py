@@ -44,6 +44,8 @@ class BacktestResult:
     zero_cost_end_equity: float | None = None
     entry_timeframe: str = "1h"
     trend_timeframe: str = "4h"
+    stop_atr_mult: float = 1.5
+    tp_atr_mult: float = 2.0
 
     @property
     def closed_trades(self) -> list[Trade]:
@@ -68,6 +70,11 @@ class BacktestResult:
             "source": self.source,
             "entry_timeframe": self.entry_timeframe,
             "trend_timeframe": self.trend_timeframe,
+            "stop_atr_mult": self.stop_atr_mult,
+            "tp_atr_mult": self.tp_atr_mult,
+            "reward_risk": round(self.tp_atr_mult / self.stop_atr_mult, 4)
+            if self.stop_atr_mult
+            else None,
             "bars": int(len(self.equity_curve)) if self.equity_curve is not None else 0,
             "first_bar": first,
             "last_bar": last,
@@ -129,6 +136,8 @@ def run_backtest(
     compare_zero_cost: bool = False,
     entry_timeframe: str = "1h",
     trend_timeframe: str = "4h",
+    stop_atr_mult: float = 1.5,
+    tp_atr_mult: float = 2.0,
 ) -> BacktestResult:
     settings = settings or load_settings()
     calendar = calendar if calendar is not None else calendar_from_settings(settings)
@@ -144,6 +153,8 @@ def run_backtest(
         source=source,
         entry_timeframe=entry_timeframe,
         trend_timeframe=trend_timeframe,
+        stop_atr_mult=stop_atr_mult,
+        tp_atr_mult=tp_atr_mult,
     )
     equity_points: list[tuple[pd.Timestamp, float]] = []
 
@@ -262,8 +273,12 @@ def run_backtest(
             pending_entry = {
                 "signal_time": ts,
                 "reason": decision.reason,
-                "stop_fn": lambda fill, a=atr_signal: stop_price(fill, a),
-                "tp_fn": lambda fill, a=atr_signal: take_profit_price(fill, a),
+                "stop_fn": lambda fill, a=atr_signal: stop_price(
+                    fill, a, atr_mult=stop_atr_mult
+                ),
+                "tp_fn": lambda fill, a=atr_signal: take_profit_price(
+                    fill, a, atr_mult=tp_atr_mult
+                ),
             }
 
     # Mark-to-market open position at the last close (not a forced exit).
@@ -282,6 +297,8 @@ def run_backtest(
             compare_zero_cost=False,
             entry_timeframe=entry_timeframe,
             trend_timeframe=trend_timeframe,
+            stop_atr_mult=stop_atr_mult,
+            tp_atr_mult=tp_atr_mult,
         )
         result.zero_cost_end_equity = baseline.end_equity
     return result
@@ -293,6 +310,8 @@ def format_report(result: BacktestResult) -> str:
         "Alicia backtest — BTC/USDT spot, LONG only",
         f"  source:        {s['source']}",
         f"  timeframes:    entry {s['entry_timeframe']} / trend EMA200 {s['trend_timeframe']}",
+        f"  stop / TP:     {s['stop_atr_mult']:g}×ATR / {s['tp_atr_mult']:g}×ATR "
+        f"(RR 1:{s['reward_risk']:g})",
         f"  bars:          {s['bars']}  ({s['first_bar']} → {s['last_bar']})",
         f"  trades:        {s['trades']}  (open at end: {s['open_at_end']})",
         f"  wins/losses:   {s['wins']}/{s['losses']}  (win rate {s['win_rate_pct']:.2f}%)",

@@ -76,3 +76,12 @@ def test_stop_and_target_use_atr_multiples():
     entry, atr = 50_000.0, 1_000.0
     assert stop_price(entry, atr) == 50_000.0 - 1.5 * 1_000.0
     assert take_profit_price(entry, atr) == 50_000.0 + 2.0 * 1_000.0
+
+
+def test_experiment_rr_1_to_2_uses_3x_atr_tp():
+    entry, atr = 50_000.0, 1_000.0
+    stop = stop_price(entry, atr, atr_mult=1.5)
+    take = take_profit_price(entry, atr, atr_mult=3.0)
+    assert stop == 50_000.0 - 1.5 * 1_000.0
+    assert take == 50_000.0 + 3.0 * 1_000.0
+    assert abs((take - entry) / (entry - stop) - 2.0) < 1e-12

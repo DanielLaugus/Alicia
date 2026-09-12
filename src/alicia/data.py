@@ -11,7 +11,7 @@ from typing import Callable, Iterable
 
 import pandas as pd
 
-from alicia.indicators import resample_ohlcv_4h
+from alicia.indicators import resample_ohlcv, resample_ohlcv_4h
 from alicia.sample_data import generate_sample_ohlcv, ohlcv_from_csv, ohlcv_to_csv
 
 OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
@@ -23,7 +23,9 @@ TIMEFRAME_MS = {
     "5m": 5 * 60_000,
     "15m": 15 * 60_000,
     "1h": 60 * 60 * 1000,
+    "2h": 2 * 60 * 60 * 1000,
     "4h": 4 * 60 * 60 * 1000,
+    "8h": 8 * 60 * 60 * 1000,
     "1d": 24 * 60 * 60 * 1000,
 }
 
@@ -122,6 +124,55 @@ def resolve_cached_1h(
     directory: str | Path | None = None,
 ) -> Path | None:
     return resolve_cached(exchange_id, symbol, "1h", directory)
+
+
+def write_resampled_cache(
+    source_1h: Path,
+    timeframe: str,
+    *,
+    exchange_id: str,
+    symbol: str,
+    directory: str | Path | None = None,
+) -> Path:
+    """Build a higher-TF cache from 1h bars (used when a venue has no native 2h)."""
+    if timeframe == "1h":
+        raise ValueError("Refusing to resample 1h onto itself")
+    frame = resample_ohlcv(read_cache(source_1h), timeframe)
+    if frame.empty:
+        raise RuntimeError(f"Resample of {source_1h} to {timeframe} produced no bars")
+    dest = cache_csv_path(exchange_id, symbol, timeframe, directory)
+    write_cache(frame, dest, _meta_for(frame, exchange_id, symbol, timeframe))
+    meta_path = cache_meta_path(dest)
+    extra = json.loads(meta_path.read_text(encoding="utf-8"))
+    extra["source"] = f"resampled-from-1h:{source_1h}"
+    meta_path.write_text(json.dumps(extra, indent=2) + "\n", encoding="utf-8")
+    return dest
+
+
+def resolve_or_resample(
+    exchange_id: str,
+    symbol: str,
+    timeframe: str,
+    directory: str | Path | None = None,
+) -> Path | None:
+    """Find a cache for ``timeframe``, resampling from 1h when needed (2h experiment)."""
+    path = resolve_cached(exchange_id, symbol, timeframe, directory)
+    if path is not None:
+        return path
+    if timeframe in {"2h", "8h"}:
+        src = resolve_cached_1h(exchange_id, symbol, directory)
+        if src is None:
+            return None
+        # Keep the venue prefix of the 1h file so OKX 1h → OKX 2h.
+        venue = src.name.split("_", 1)[0] if "_" in src.name else exchange_id
+        return write_resampled_cache(
+            src,
+            timeframe,
+            exchange_id=venue,
+            symbol=symbol,
+            directory=directory,
+        )
+    return None
 
 
 def bars_to_frame(raw: Iterable[list]) -> pd.DataFrame:
