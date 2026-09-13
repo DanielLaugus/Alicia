@@ -1,1 +1,210 @@
 # Alicia
+
+BTC/USDT **spot** trading bot. Backtesting first; paper and live come later.
+
+The strategy is encoded as explicit, unit-tested rules in `src/alicia/strategy.py` and `src/alicia/risk.py`. The human-readable source of truth is [`docs/SPEC.md`](docs/SPEC.md).
+
+No exchange keys are required to install, test, download public history, or dry-run.
+
+## Strategy rules
+
+Market: **BTC/USDT spot** · Entry TF: **1h** · Trend TF: **4h** · **LONG only**
+
+1. **Trend filter.** New entries only when price is above EMA200 on the 4h chart. Otherwise no new entry.
+2. **Entry.** LONG only when **both** are true on the closed 1h bar: RSI(14) crosses **up from below 40 to above 40**, **and** 1h volume is above its 20-period average.
+3. **Stop & target.** Stop = 1.5 × ATR(14, 1h) below entry. Take-profit = 2 × ATR(14, 1h) above entry. **No averaging down.**
+4. **Position sizing.** Notional positions up to **€200** are allowed. Above that, size so that a stop loss risks **1–3% of bot capital** (quantity derived from stop distance). **Max one open position.**
+5. **Kill-switch.** Halt / pause on **−10% monthly drawdown**; pause on **CPI / Fed / NFP** days (flags + JSON calendar); pause on **API / latency** errors.
+6. **Order book (paper/live).** New LONG also needs a public L2 snapshot: spread ≤ **2 bps**, top-N imbalance ≥ **+0.20** (clearly bid-heavy), and ≥ **2.0 BTC** bid depth within **5 bps** of mid. Missing book → no entry when required. **Not applied to historical backtests** (no real L2 history).
+
+Indicators: EMA200(4h), RSI(14) 1h, volume vs MA20, ATR(14) 1h, plus live L2 spread / imbalance / depth.
+
+## Setup
+
+Python 3.11+.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env
+```
+
+`.env` is gitignored. Leave `EXCHANGE_API_KEY` / `EXCHANGE_API_SECRET` empty for backtest and dry-run.
+
+Public history (still no key) needs ccxt:
+
+```bash
+pip install -e ".[dev,exchange]"
+```
+
+## Real market data + backtest
+
+Public BTC/USDT **spot** 1h candles come from ccxt (Binance by default). No API key. 4h bars used by the EMA200 trend filter are **resampled from 1h** so the series stays consistent.
+
+Cache files live under `data/cache/` (gitignored). After the first download, backtests run offline.
+
+```bash
+# ~2 years of 1h BTC/USDT (paginated public fetch)
+python -m alicia download --years 2
+
+# Incremental update (only bars after the last cached timestamp)
+python -m alicia download
+
+# Reproducible backtest on the cache: fees + slippage, win rate, max DD
+python -m alicia backtest
+```
+
+Useful variants:
+
+If Binance (or another venue) geo-blocks public REST, `download` tries other public spot venues (OKX, KuCoin, Gate, …) and records the one that worked in `data/cache/active.json`. `backtest` follows that pointer.
+
+```bash
+python -m alicia download --exchange okx --years 2
+python -m alicia download --since 2024-01-01 --force
+python -m alicia download --no-fallback                # preferred venue only
+python -m alicia backtest --csv path/to/btcusdt_1h.csv
+python -m alicia backtest --synthetic                  # built-in demo series
+```
+
+Curiosity only — **not** the product default — extra timeframes (see `docs/BACKTEST.md`):
+
+```bash
+python -m alicia download --timeframe 1m --days 60
+python -m alicia backtest --timeframe 1m
+python -m alicia download --timeframe 2h --years 2   # or resampled from the 1h cache
+python -m alicia backtest --timeframe 2h --reward-risk 2
+python -m alicia download --timeframe 4h --years 2
+python -m alicia backtest --timeframe 4h --reward-risk 2
+
+# US-session / peak-1h experiments (not the product default)
+python -m alicia backtest --profile us-session      # 4h/12h, NY peak, RR 1:2
+python -m alicia backtest --profile us-peak-1h      # 1h entries inside NY peak, 4h EMA200
+python -m alicia backtest --profile us-peak-best    # 1h peak + EMA50 + chop
+
+# Second signal family — Donchian breakout (not RSI; not the product default)
+python -m alicia backtest --profile breakout        # 4h/12h 24/7, Donchian 20 + EMA200, RR 1:2
+python -m alicia backtest --profile breakout-us     # same + NY peak [09:00,13:00)
+python -m alicia backtest --signal breakout --timeframe 4h --reward-risk 2
+
+# Potential-search (not the BTC product default). ETH regime-20 cleared the written bar — see docs/BACKTEST.md
+python -m alicia download --exchange okx --symbol ETH/USDT --timeframe 4h --years 2
+python -m alicia backtest --symbol ETH/USDT --profile regime-20
+```
+
+A recorded OHLCV run is in [`docs/BACKTEST.md`](docs/BACKTEST.md). That run **skips order-book filters** — see below.
+
+**CI / unit tests never hit the network.** Live `download` + `backtest` is a manual/integration step.
+
+## Order book vs backtest
+
+Paper and a future live loop **must** read a public L2 book (`fetch_order_book`, no API key). Default venue is `ORDERBOOK_EXCHANGE` (example: **okx**, same as the recorded candle download). Filters are in [`docs/SPEC.md`](docs/SPEC.md) under **Orderbuch-Filter**.
+
+Historical candle CSVs do **not** include order books. Alicia **does not invent** L2 for 1h history. `backtest` / `dry-run` print that the OB gate was skipped and keep using fixed `SLIPPAGE_BPS`. Paper may show **half-spread** as estimated extra slip vs mid at that instant only.
+
+```bash
+python -m alicia book --json tests/fixtures/orderbook_pass.json   # offline
+python -m alicia book                                            # live public L2
+python -m alicia paper --book tests/fixtures/orderbook_pass.json
+python -m alicia dry-run --book tests/fixtures/orderbook_pass.json
+```
+
+## Synthetic dry-run
+
+Uses fees (`FEE_BPS`) and adverse slippage (`SLIPPAGE_BPS`) on every fill. The dry-run series is deterministic and needs no cache.
+
+```bash
+python -m alicia dry-run
+pytest
+```
+
+Print the five rules:
+
+```bash
+python -m alicia rules
+```
+
+## Official paper profile — ETH/USDT `regime-20`
+
+**Locked paper bundle** (signal evaluation only). Does **not** change the BTC 1h/4h RSI default for `python -m alicia backtest` without flags. Live trading is **not** enabled.
+
+| Item | Value |
+| --- | --- |
+| Symbol | **ETH/USDT** |
+| Profile | **`paper-eth`** (alias of `regime-20`) |
+| Rules | ADX(14) ≥ 20 → Donchian-20 + 12h EMA200; else RSI bounce. 4h entry, RR 1:2 |
+| Backtest costs | 10 bps fee / 5 bps slip (historical). Paper also applies the live L2 gate |
+| Mode | **Paper only** — latest closed bar + order book. No orders. No withdrawals |
+
+Caveats (do not skip): the same rules **lose on BTC** (−15.85%). ETH mid-sample OOS is thin (+0.52%, 16 trades). Last 6 months **−7.27%**. See `docs/BACKTEST.md` § Re-test ETH regime-20.
+
+### How to paper trade ETH regime-20
+
+```bash
+# 1. Public ETH 4h history (no API key)
+python -m alicia download --exchange okx --symbol ETH/USDT --timeframe 4h --years 2
+
+# 2. Recommended paper command (official profile + public L2, no order)
+python -m alicia paper --profile paper-eth
+```
+
+Equivalents: `python -m alicia paper` (uses `PAPER_PROFILE` / `PAPER_SYMBOL` from `.env`) or `python -m alicia paper --profile regime-20 --symbol ETH/USDT`.
+
+```bash
+python -m alicia paper --profile paper-eth --public   # latest public 4h + L2
+python -m alicia paper --profile paper-eth --book tests/fixtures/orderbook_pass.json
+python -m alicia paper --profile paper-eth --no-book  # fail closed if ORDERBOOK_REQUIRE=true
+python -m alicia backtest --symbol ETH/USDT --profile regime-20   # research replay only
+```
+
+Paper **evaluates the latest closed-bar signal only**. It does not place orders. A future live loop is not enabled by this CLI.
+
+## Safety notes
+
+- Create exchange API keys with **read + trade only**. Never enable withdrawal.
+- This repository **does not implement** withdraw, transfer, or wallet-move APIs. There is no CLI command for it.
+- Kill-switch pauses **new entries** on −10% monthly drawdown (from the UTC month’s equity peak), on configured macro days, and on API/latency errors. Open trades still use their stop / take-profit.
+- Macro days: set `PAUSE_CPI`, `PAUSE_FED`, `PAUSE_NFP` and optionally point `EVENTS_PATH` at a JSON file (see `data/events.example.json`).
+- Do not commit `.env` or real keys.
+
+## Config (env)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `BOT_CAPITAL_EUR` | `2000` | Bot capital for sizing and drawdown |
+| `RISK_PCT` | `0.02` | Risk to stop, clamped to 1–3% |
+| `MAX_SMALL_NOTIONAL_EUR` | `200` | Small-book notional allowance |
+| `USDT_EUR_RATE` | `1` | Quote→EUR conversion for the €200 rule |
+| `FEE_BPS` | `10` | Per-side fee (10 = 0.10%) |
+| `SLIPPAGE_BPS` | `5` | Adverse slippage (5 = 0.05%) |
+| `MONTHLY_DD_HALT` | `0.10` | Monthly drawdown kill-switch |
+| `PAUSE_CPI` / `PAUSE_FED` / `PAUSE_NFP` | `true` | Event-day pauses |
+| `EVENTS_PATH` | `data/events.example.json` | Extra calendar dates |
+| `SYMBOL` / `EXCHANGE` | `BTC/USDT` / `binance` | Market for **backtest** default (spot) |
+| `PAPER_PROFILE` | `paper-eth` | Official paper command profile |
+| `PAPER_SYMBOL` | `ETH/USDT` | Official paper symbol (does not change BTC backtest) |
+| `DATA_CACHE_DIR` | `data/cache` | Public OHLCV cache (gitignored) |
+| `ALICIA_MODE` | `backtest` | `backtest` \| `paper` \| `live` |
+| `API_LATENCY_MS_LIMIT` | `5000` | Latency pause threshold |
+| `ORDERBOOK_ENABLED` | `true` | Apply L2 gate on paper/live |
+| `ORDERBOOK_REQUIRE` | `true` | Fail closed if the book is missing |
+| `ORDERBOOK_IN_BACKTEST` | `false` | Do not invent historical books |
+| `ORDERBOOK_MAX_SPREAD_BPS` | `2` | Max (ask−bid)/mid |
+| `ORDERBOOK_LEVELS` | `10` | Top-N for imbalance |
+| `ORDERBOOK_IMBALANCE_MIN` | `0.20` | `(bid−ask)/(bid+ask)` floor (clearly bid-heavy) |
+| `ORDERBOOK_MIN_BID_DEPTH` | `2` | Min bid BTC within the depth band |
+| `ORDERBOOK_DEPTH_BPS` | `5` | Band around mid for the depth sum |
+| `ORDERBOOK_LIMIT` | `20` | `fetch_order_book` depth |
+| `ORDERBOOK_EXCHANGE` | `okx` | Public L2 venue (no key) |
+
+## Layout
+
+```
+docs/SPEC.md          # strategy source of truth
+docs/BACKTEST.md      # last real-data backtest numbers
+src/alicia/           # strategy, risk, order book, calendar, backtest
+tests/                # unit tests (offline; mocked fetch + L2 fixtures)
+data/events.example.json
+data/cache/           # gitignored public OHLCV after `download`
+.env.example
+```

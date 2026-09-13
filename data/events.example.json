@@ -1,0 +1,11 @@
+{
+  "comment": "Configurable macro calendar. Types: cpi, fed, nfp. Dates are UTC calendar days. Flags in .env can disable a type without deleting dates.",
+  "events": [
+    {"date": "2024-01-12", "type": "cpi", "label": "US CPI"},
+    {"date": "2024-01-31", "type": "fed", "label": "FOMC"},
+    {"date": "2024-02-02", "type": "nfp", "label": "NFP"},
+    {"date": "2024-03-12", "type": "cpi", "label": "US CPI"},
+    {"date": "2024-03-20", "type": "fed", "label": "FOMC"},
+    {"date": "2024-04-05", "type": "nfp", "label": "NFP"}
+  ]
+}

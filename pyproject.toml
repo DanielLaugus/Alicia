@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alicia"
+version = "0.1.0"
+description = "BTC/USDT spot trading bot — backtest-first, long-only 1h/4h rules"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Alicia" }]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+exchange = ["ccxt>=4.3"]
+
+[project.scripts]
+alicia = "alicia.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
