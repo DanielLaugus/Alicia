@@ -5,6 +5,7 @@ import pandas as pd
 from alicia.backtest import (
     apply_buy_slippage,
     apply_sell_slippage,
+    format_report,
     max_drawdown_pct,
     run_backtest,
 )
@@ -15,6 +16,15 @@ from alicia.indicators import attach_indicators, resample_ohlcv
 from alicia.risk import size_from_settings
 from alicia.sample_data import generate_sample_ohlcv
 from alicia.strategy import evaluate_entry
+
+
+def test_format_report_uses_settings_symbol(settings):
+    from dataclasses import replace
+
+    result = run_backtest(generate_sample_ohlcv(n_1h=800, seed=1), replace(settings, symbol="ETH/USDT"))
+    text = format_report(result)
+    assert result.symbol == "ETH/USDT"
+    assert "ETH/USDT" in text
 
 
 def test_sample_series_produces_trades_after_ema_warmup(settings):
@@ -168,6 +178,7 @@ def test_cli_backtest_synthetic(capsys):
     assert "win rate" in captured.out
     assert "EXPERIMENT" not in captured.out
     assert "1.5×ATR / 2×ATR" in captured.out
+    assert "BTC/USDT" in captured.out
 
 
 def test_trend_tf_defaults_keep_product_and_experiments():

@@ -136,7 +136,7 @@ python -m alicia rules
 | Backtest costs | 10 bps fee / 5 bps slip (historical). Paper also applies the live L2 gate |
 | Mode | **Paper only** — latest closed bar + order book. No orders. No withdrawals |
 
-Caveats (do not skip): the same rules **lose on BTC** (−15.85%). ETH OOS is thin (+0.52%, 16 trades). See `docs/BACKTEST.md` § Potential search.
+Caveats (do not skip): the same rules **lose on BTC** (−15.85%). ETH mid-sample OOS is thin (+0.52%, 16 trades). Last 6 months **−7.27%**. See `docs/BACKTEST.md` § Re-test ETH regime-20.
 
 ### How to paper trade ETH regime-20
 

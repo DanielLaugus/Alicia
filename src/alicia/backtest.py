@@ -67,6 +67,7 @@ class BacktestResult:
     stop_mode: str = "atr"
     side: str = "long"
     vol_target: float | None = None
+    symbol: str = "BTC/USDT"
 
     @property
     def closed_trades(self) -> list[Trade]:
@@ -236,6 +237,7 @@ def run_backtest(
         stop_mode=stop_mode,
         side=side,
         vol_target=vol_target,
+        symbol=settings.symbol,
     )
     equity_points: list[tuple[pd.Timestamp, float]] = []
 
@@ -546,7 +548,7 @@ def run_backtest(
 def format_report(result: BacktestResult) -> str:
     s = result.summary()
     lines = [
-        "Alicia backtest — BTC/USDT "
+        f"Alicia backtest — {result.symbol} "
         + (
             "futures-like LONG+SHORT research"
             if s.get("side") == "both"

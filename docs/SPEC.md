@@ -158,7 +158,7 @@ See `docs/BACKTEST.md` for the comparison vs product RSI and `us-session`. Do no
 
 Recommended command: `python -m alicia paper --profile paper-eth`
 
-Known caveats: the same bundle **fails on BTC**; ETH mid-sample OOS is thin. See `docs/BACKTEST.md` § Potential search and § How to paper trade.
+Known caveats: the same bundle **fails on BTC**; ETH mid-sample OOS is thin; last 6 months **−7.27%**. See `docs/BACKTEST.md` § Re-test ETH regime-20.
 
 ## Execution assumptions (backtest)
 

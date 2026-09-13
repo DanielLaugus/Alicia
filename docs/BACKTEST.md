@@ -430,7 +430,7 @@ python -m alicia backtest --symbol ETH/USDT --profile regime-20
 
 | Window | Trades | WR | Return | Max DD |
 | --- | ---: | ---: | ---: | ---: |
-| Full ~2y (2024-09-12 → 2026-09-12, 4,379 4h bars) | **44** | 40.91% | **+11.47%** | −16.07% |
+| Full ~2y (2024-09-14 00:00 → 2026-09-13 16:00 UTC, 4,379 native OKX 4h bars) | **44** | 40.91% | **+11.47%** | −16.07% |
 | Train to 2025-09-12 | 28 | 42.86% | **+10.88%** | −16.07% |
 | OOS from 2025-09-12 | 16 | 37.50% | **+0.52%** | −15.58% |
 | Zero-cost full | 44 | — | +20.58% (eq 2,411.52) | — |
@@ -443,8 +443,44 @@ Meets: (1) +11.47% > +5% at 10/5; (2) train and mid-sample OOS both ≥ 0; (3) 4
 
 - This is **ETH**, not BTC. The same `regime-20` bundle on BTC 4h is **−15.85%** (57 trades). Do not port it blindly.
 - OOS is **thin**: 16 trades, **+0.52%**. Alternate splits are not stable: 2025-06-01 train −3.66% / OOS +15.7%; 2025-12-01 train +20.2% / OOS **−7.27%**. The pre-declared mid split passes; other cuts do not.
+- **Last 6 months (from 2026-03-13) are the same 9 trades as the Dec-2025 OOS: −7.27%.** No signals 2025-10-28 → 2026-04-14. Recent paper tape is red.
 - ADX 20 vs 25 vs 30 was a one-parameter A/B. Split 25 on ETH is +22.7% full but OOS **−3.0%** (fails rule 2). Split 20 is the one that cleared OOS.
 - DD −16% is not pretty. The run also tripped the **−10% monthly kill-switch** twice. Not live-money advice. **Do not replace the BTC RSI product default.**
+
+### Re-test ETH regime-20 (2026-09-13, skeptical)
+
+Forced a **fresh** OKX public download (`--force --no-fallback`). Native 4h closes matched a 1h→4h resample on every common bar (max |Δclose| = 0). Incomplete last bar (20:00 UTC) dropped. Replay: `python -m alicia backtest --symbol ETH/USDT --profile regime-20 --exchange okx`.
+
+| Item | Fresh number |
+| --- | --- |
+| Venue / file | OKX `okx_ETHUSDT_4h.csv` (fetched 2026-09-13 21:34 UTC) |
+| Bars / range | **4,379** 4h · **2024-09-14 00:00 → 2026-09-13 16:00 UTC** · 0 gaps |
+| ETH buy-and-hold (first→last close) | 2433.17 → 2506.08 (**+3.00%**); range 1418.80–4832.46 |
+| Full 10/5 | **44** trades · 18/26 · WR 40.91% · **+11.47%** · DD **−16.07%** · eq 2,229.34 · fees 132.93 / slip 66.46 |
+| Zero-cost | +20.58% (eq 2,411.52) |
+| Kill-switch | tripped **twice** (−10.01%, −10.37%) |
+
+Headline **matches the prior claim** (window shifted ~2 days vs 2024-09-12→2026-09-12; same 44 fills). CLI report now prints `ETH/USDT` (it previously hardcoded BTC in the title only — source path was already the ETH cache).
+
+**Robustness (all after 10/5 unless noted):**
+
+| Check | Result |
+| --- | --- |
+| Mid split 2025-09-12 | Train **+10.88%** (28) / OOS **+0.52%** (16) — still the only passing cut |
+| Split 2025-06-01 | Train **−3.66%** (10) / OOS +15.70% (34) — fails rule 2 |
+| Split 2025-12-01 | Train +20.20% (35) / OOS **−7.27%** (9) — fails rule 2 |
+| Last 6 months from 2026-03-13 | **−7.27%** (9, 2/7). Same nine fills as Dec-2025 OOS: no signals 2025-10-28 → 2026-04-14 |
+| ETH product RSI 1h/4h | **−27.93%** (99+1 open, DD −37.4%) |
+| ETH breakout-only 4h/12h RR 1:2 | +3.24% (56, DD −19.5%) |
+| ETH RSI-only 4h/12h RR 1:2 | −0.13% (11) |
+| BTC same `regime-20` | **−15.85%** (57, DD −24.9%) — loss confirmed |
+| Fees 15/10 | still **+6.32%** (44, DD −17.2%, four kill-switch trips) |
+| Fees 2/2 maker | +18.33% (no kill-switch) |
+| Random 44 entries × 40 seeds | mean **+4.16%**, median +0.59%, p10 −16.9%, p90 +22.2%. **30%** of random books beat +11.47%. Strategy beats the mean, not a miracle |
+
+**Bug audit (no lookahead found):** Donchian is prior-N high (`shift(1)`). 12h EMA200 is only visible after the trend bar completes. ADX/RSI/ATR on prefix vs full series: **0 mismatches** on a 12-bar sample. Last bar is finished. All 44 fills are the **next** 4h open (0 same-bar fills). 0 overlapping positions.
+
+**Verdict:** **Confirmed** the +11.47% arithmetic on a new download. **Not robust** — keep the paper lock, do not raise confidence, do not go live. Profit is clustered in the 2025-07–10 trend; the tape since spring 2026 is a 2/7 losing book. Reproduce: `python3 scripts/retest_eth_regime20.py`.
 
 ### How to paper trade ETH regime-20
 
